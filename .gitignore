@@ -1,0 +1,8 @@
+node_modules/
+.env
+*.log
+dev-utils/run-logs/*.json
+dev-utils/service_account.json
+__pycache__/
+as_backend.config
+ui_config.config
