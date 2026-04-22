@@ -1,9 +1,9 @@
 /*
- * test_ui_render.js — headless smoke-test of market_findings_3.0.html render logic
+ * test_ui_render.js — headless smoke-test of arborist_3.0.html render logic
  * against a local findings JSON file.
  *
  * Usage:
- *   node dev-utils/test_ui_render.js [path/to/market_findings_log.json]
+ *   node dev-utils/test_ui_render.js [path/to/findings.json]
  *
  * Strategy: load the HTML, strip the <script> block, neutralise DOM refs
  * with a minimal jsdom-style shim, inject the data via processData(), and
@@ -14,8 +14,8 @@ const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
 
-const HTML_PATH = path.resolve(__dirname, '..', 'market_findings_3.0.html');
-const DATA_PATH = process.argv[2] || path.resolve(__dirname, '..', '..', 'alphasnap', 'dev-utils', 'market_findings_log2.json');
+const HTML_PATH = path.resolve(__dirname, '..', 'arborist_3.2.html');
+const DATA_PATH = process.argv[2] || path.resolve(__dirname, '..', '..', 'arboryx.ai', 'dev-utils', 'market_findings_log2.json');
 
 // -- Load source HTML and extract the script body --
 const html = fs.readFileSync(HTML_PATH, 'utf8');
@@ -70,6 +70,8 @@ const document = {
     return null;
   },
   querySelectorAll() { return []; },
+  addEventListener() {},
+  removeEventListener() {},
 };
 
 const sessionStorage = { _d: {}, getItem(k) { return this._d[k] ?? null; }, setItem(k, v) { this._d[k] = v; }, removeItem(k) { delete this._d[k]; } };

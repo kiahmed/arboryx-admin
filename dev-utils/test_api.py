@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Comprehensive, configurable test script for the AlphaSnap API backend.
+"""Comprehensive, configurable test script for the Arboryx Admin API backend.
 
 Tests all endpoints, filters, auth, combined queries, and edge cases against
 a live (deployed or local) API instance.
@@ -9,8 +9,8 @@ Requirements:
 
 Usage:
     # Minimal — URL from env or CLI:
-    export ALPHASNAP_API_URL=https://us-central1-marketresearch-agents.cloudfunctions.net/alphasnap-api
-    export ALPHASNAP_API_KEY=your-key-here
+    export ARBORYX_ADMIN_API_URL=https://us-central1-marketresearch-agents.cloudfunctions.net/arboryx-admin-api
+    export ARBORYX_ADMIN_API_KEY=your-key-here
     python3 dev-utils/test_api.py
 
     # Override everything on the command line:
@@ -622,24 +622,24 @@ def _print_summary(results: list[TestResult]) -> None:
 # ---------------------------------------------------------------------------
 def _build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
-        description="Comprehensive test script for the AlphaSnap API backend.",
+        description="Comprehensive test script for the Arboryx Admin API backend.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "Environment variables (fallbacks for CLI args):\n"
-            "  ALPHASNAP_API_URL   -> --url\n"
-            "  ALPHASNAP_API_KEY   -> --api-key\n"
+            "  ARBORYX_ADMIN_API_URL   -> --url\n"
+            "  ARBORYX_ADMIN_API_KEY   -> --api-key\n"
         ),
     )
 
     p.add_argument(
         "--url", "-u",
-        default=os.environ.get("ALPHASNAP_API_URL"),
-        help="API base URL (or set ALPHASNAP_API_URL env var)",
+        default=os.environ.get("ARBORYX_ADMIN_API_URL"),
+        help="API base URL (or set ARBORYX_ADMIN_API_URL env var)",
     )
     p.add_argument(
         "--api-key", "-k",
-        default=os.environ.get("ALPHASNAP_API_KEY"),
-        help="API key for authenticated requests (or set ALPHASNAP_API_KEY env var)",
+        default=os.environ.get("ARBORYX_ADMIN_API_KEY"),
+        help="API key for authenticated requests (or set ARBORYX_ADMIN_API_KEY env var)",
     )
     p.add_argument(
         "--category", "-c",
@@ -757,13 +757,13 @@ def main() -> int:
 
     if not cfg.url:
         parser.error(
-            "API URL is required. Pass --url or set ALPHASNAP_API_URL."
+            "API URL is required. Pass --url or set ARBORYX_ADMIN_API_URL."
         )
 
     # Strip trailing slash for consistent URL building
     cfg.url = cfg.url.rstrip("/")
 
-    print(f"\n{_C.BOLD}AlphaSnap API Test Runner{_C.RESET}")
+    print(f"\n{_C.BOLD}Arboryx Admin API Test Runner{_C.RESET}")
     print(f"  {_C.DIM}URL:{_C.RESET}       {cfg.url}")
     print(f"  {_C.DIM}API Key:{_C.RESET}   {'***' + cfg.api_key[-4:] if cfg.api_key and len(cfg.api_key) > 4 else '(not set)'}")
     print(f"  {_C.DIM}Suite:{_C.RESET}     {cfg.suite}")

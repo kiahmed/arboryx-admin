@@ -1,8 +1,0 @@
-PROJECT_ID="your project id"
-LOCATION="your location"
-STORAGE_BUCKET="your bucket name"
-
-# === UI DEPLOYMENT ===
-UI_FILE="your ui file name"
-API_URL="your-api-url-here"
-API_KEY="your-api-key-here"

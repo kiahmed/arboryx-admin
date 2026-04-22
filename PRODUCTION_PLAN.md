@@ -1,4 +1,4 @@
-# AlphaSnap UI — Production Implementation Plan
+# Arboryx Admin — Production Implementation Plan
 
 > **Last updated:** 2026-04-09
 > **Scope:** Phases 1-5 following Phase 0 (MVP auth, caching, pagination)
@@ -19,7 +19,7 @@ Phase 0 delivers the baseline API hardening on top of the existing Cloud Functio
 - Configurable test script
 
 **What the system looks like after Phase 0:**
-A single Cloud Function reading a flat JSON file from GCS, protected by a static API key, with basic caching and pagination. The frontend (`market_findings_2.95.html`) still loads data from a local file or raw URL — not yet wired to the authenticated API.
+A single Cloud Function reading a flat JSON file from GCS, protected by a static API key, with basic caching and pagination. The frontend (`arborist_2.95.html`) still loads data from a local file or raw URL — not yet wired to the authenticated API.
 
 ---
 
@@ -51,8 +51,8 @@ A single Cloud Function reading a flat JSON file from GCS, protected by a static
             │             │             │
     ┌───────v──────┐      │      ┌──────v───────┐
     │  CF: prod    │      │      │  CF: staging │  <-- Phase 4
-    │  alphasnap-  │      │      │  alphasnap-  │
-    │  ui-api      │      │      │  ui-api-stg  │
+    │  arboryx-    │      │      │  arboryx-    │
+    │  admin-api   │      │      │  admin-api-s │
     └───────┬──────┘      │      └──────┬───────┘
             │             │             │
     ┌───────v──────┐      │      ┌──────v───────┐
@@ -105,7 +105,7 @@ _API_KEY = None
 def _load_api_key():
     global _API_KEY
     if _API_KEY is None:
-        _API_KEY = _get_secret("alphasnap-ui-api-key")
+        _API_KEY = _get_secret("arboryx-admin-api-key")
     return _API_KEY
 ```
 
@@ -149,7 +149,7 @@ def _cors_headers(request):
     }
 ```
 
-Set `ALLOWED_ORIGINS` as an env var during deploy (e.g., `https://alphasnap.example.com,http://localhost:8080`).
+Set `ALLOWED_ORIGINS` as an env var during deploy (e.g., `https://arboryx.example.com,http://localhost:8080`).
 
 **Rationale:** Wildcard CORS means any website can make authenticated requests if it knows the API key. Origin allowlisting is the minimal browser-side protection.
 
@@ -248,7 +248,7 @@ Fields:
 3. Verify counts match
 4. The GCS file remains as a backup / source-of-truth for the agent pipelines
 
-**Agent pipeline integration:** The alphasnap agent pipelines currently write to GCS. Two options:
+**Agent pipeline integration:** The arboryx.ai agent pipelines currently write to GCS. Two options:
 - **Option A (recommended):** Add a GCS-triggered Cloud Function that watches `market_findings_log.json` and syncs new entries to Firestore. This decouples the data pipeline from the UI backend — the agents keep writing JSON, and the sync function handles the translation.
 - **Option B:** Modify the agent pipelines to write directly to Firestore. Tighter coupling but fewer moving parts.
 
@@ -349,7 +349,7 @@ import logging
 import google.cloud.logging
 
 google.cloud.logging.Client().setup_logging()
-logger = logging.getLogger("alphasnap-ui-api")
+logger = logging.getLogger("arboryx-admin-api")
 
 # Structured log entry
 logger.info("request_handled", extra={
@@ -374,18 +374,18 @@ Use Cloud Monitoring custom metrics via the `google-cloud-monitoring` SDK:
 
 | Metric | Type | Labels | Purpose |
 |--------|------|--------|---------|
-| `alphasnap/api/request_count` | Counter | `action`, `status`, `category` | Traffic and error rates |
-| `alphasnap/api/latency_ms` | Distribution | `action`, `cache_hit` | Performance tracking |
-| `alphasnap/api/findings_count` | Gauge | `category` | Data freshness (is the count growing?) |
-| `alphasnap/sync/documents_written` | Counter | | Sync function throughput |
-| `alphasnap/sync/last_success` | Gauge | | Sync recency |
+| `arboryx_admin/api/request_count` | Counter | `action`, `status`, `category` | Traffic and error rates |
+| `arboryx_admin/api/latency_ms` | Distribution | `action`, `cache_hit` | Performance tracking |
+| `arboryx_admin/api/findings_count` | Gauge | `category` | Data freshness (is the count growing?) |
+| `arboryx_admin/sync/documents_written` | Counter | | Sync function throughput |
+| `arboryx_admin/sync/last_success` | Gauge | | Sync recency |
 
 **Pragmatic alternative:** Rather than adding `google-cloud-monitoring` as a dependency and writing custom metric descriptors, use structured logs (3.1) and create log-based metrics in Cloud Monitoring. This is zero-code — just configure it in the Cloud Console:
 
 ```
 # Log-based metric: error rate
 resource.type="cloud_function"
-resource.labels.function_name="alphasnap-ui-api"
+resource.labels.function_name="arboryx-admin-api"
 severity>=ERROR
 ```
 
@@ -397,9 +397,9 @@ Set up Cloud Monitoring alert policies:
 
 | Alert | Condition | Channel | Severity |
 |-------|-----------|---------|----------|
-| Error rate spike | > 5% of requests return 5xx over 5 minutes | Slack `#alphasnap-alerts` | Warning |
+| Error rate spike | > 5% of requests return 5xx over 5 minutes | Slack `#arboryx-admin-alerts` | Warning |
 | Function down | Health check fails 3 consecutive times (uptime check) | Slack + email | Critical |
-| Sync stale | `alphasnap/sync/last_success` > 24 hours ago | Slack | Warning |
+| Sync stale | `arboryx_admin/sync/last_success` > 24 hours ago | Slack | Warning |
 | Latency degradation | p95 latency > 3s over 10 minutes | Slack | Warning |
 | Cold start rate | > 50% of requests hit cold start in 15 min window | Slack | Info |
 
@@ -485,7 +485,7 @@ Run this after each phase to track performance regression.
 
 ```yaml
 # .github/workflows/deploy.yml
-name: Deploy AlphaSnap UI API
+name: Deploy Arboryx Admin API
 on:
   push:
     branches: [main]
@@ -522,12 +522,12 @@ jobs:
           credentials_json: ${{ secrets.GCP_SA_KEY }}
       - uses: google-github-actions/setup-gcloud@v2
       - run: |
-          FUNCTION_NAME="alphasnap-ui-api-staging" \
-          ALLOWED_ORIGINS="https://staging.alphasnap.example.com" \
+          FUNCTION_NAME="arboryx-admin-api-staging" \
+          ALLOWED_ORIGINS="https://staging.arboryx.example.com" \
           bash deploy_cloud_func.sh
       - run: |
           # Smoke test staging
-          URL=$(gcloud functions describe alphasnap-ui-api-staging --gen2 --region=us-central1 --format='value(serviceConfig.uri)')
+          URL=$(gcloud functions describe arboryx-admin-api-staging --gen2 --region=us-central1 --format='value(serviceConfig.uri)')
           STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$URL?action=health")
           if [ "$STATUS" != "200" ]; then echo "Staging health check failed"; exit 1; fi
 
@@ -556,9 +556,9 @@ Create a parallel environment:
 
 | Resource | Production | Staging |
 |----------|-----------|---------|
-| Cloud Function | `alphasnap-ui-api` | `alphasnap-ui-api-staging` |
-| Firestore DB | `(default)` | `alphasnap-staging` (named database) |
-| Secret | `alphasnap-ui-api-key` | `alphasnap-ui-api-key-staging` |
+| Cloud Function | `arboryx-admin-api` | `arboryx-admin-api-staging` |
+| Firestore DB | `(default)` | `arboryx-admin-staging` (named database) |
+| Secret | `arboryx-admin-api-key` | `arboryx-admin-api-key-staging` |
 | GCS backup bucket | `marketresearch-agents` | `marketresearch-agents-staging` |
 
 The staging function reads from a staging Firestore database populated with a subset of production data (latest 30 days). A script `dev-utils/seed_staging.sh` copies data from prod Firestore to staging.
@@ -629,7 +629,7 @@ Generate a minimal OpenAPI 3.0 spec from the function's actual behavior. Since t
 # docs/openapi.yaml
 openapi: "3.0.3"
 info:
-  title: AlphaSnap UI API
+  title: Arboryx Admin API
   version: "1.0.0"
 paths:
   /:
@@ -708,7 +708,7 @@ This replaces the `test_api_local.py` script for interactive development. Keep t
 
 ## Phase 5 — Frontend Integration & Feature Expansion
 
-**Goal:** Wire the existing `market_findings_2.95.html` frontend to the authenticated API, add user-facing features (export, real-time updates), and improve mobile experience.
+**Goal:** Wire the existing `arborist_2.95.html` frontend to the authenticated API, add user-facing features (export, real-time updates), and improve mobile experience.
 
 **Why last:** The frontend is functional today with local file upload and raw URL loading. Backend hardening, observability, and CI/CD are higher priority because they reduce risk. Frontend features are user-visible polish built on a stable foundation.
 
@@ -720,8 +720,8 @@ Modify the frontend's `CONFIG` and `loadFromUrl` to send the API key:
 
 ```javascript
 const CONFIG = {
-  API_URL: 'https://alphasnap-ui-api-xxxxxxxx.a.run.app',
-  API_KEY: localStorage.getItem('alphasnap_api_key') || '',
+  API_URL: 'https://arboryx-admin-api-xxxxxxxx.a.run.app',
+  API_KEY: localStorage.getItem('arboryx_admin_api_key') || '',
   // ... existing fields
 };
 
@@ -820,7 +820,7 @@ function exportCSV() {
     headers.join(','),
     ...rows.map(r => headers.map(h => `"${String(r[h] || '').replace(/"/g, '""')}"`).join(','))
   ].join('\n');
-  downloadBlob(csv, 'alphasnap_findings.csv', 'text/csv');
+  downloadBlob(csv, 'arboryx_findings.csv', 'text/csv');
 }
 ```
 
@@ -877,7 +877,7 @@ This is architecturally simple and avoids a full IAM / RBAC system.
 - [ ] UI is usable on a 375px-wide screen (iPhone SE size)
 - [ ] Category tabs scroll horizontally on mobile
 - [ ] File upload still works as a fallback (no regression from Phase 0 behavior)
-- [ ] New `market_findings_3.0.html` committed (or the 2.95 file is updated in place — team's call)
+- [ ] New `arborist_3.0.html` committed (or the 2.95 file is updated in place — team's call)
 
 ---
 
@@ -896,7 +896,7 @@ This is architecturally simple and avoids a full IAM / RBAC system.
 
 ### External Dependencies
 
-- **AlphaSnap agent pipelines** (sibling repo): Continues writing to GCS. No changes required for Phase 1-4. Phase 2's sync function bridges the gap.
+- **Arboryx.ai agent pipelines** (sibling repo): Continues writing to GCS. No changes required for Phase 1-4. Phase 2's sync function bridges the gap.
 - **GCP services**: Cloud Functions, Firestore, Secret Manager, Cloud Monitoring, Cloud Logging. All are GA services with SLAs. No beta dependencies.
 - **GitHub Actions**: Free tier provides 2,000 minutes/month for private repos. This pipeline will use ~5 minutes per run, supporting ~400 deploys/month.
 

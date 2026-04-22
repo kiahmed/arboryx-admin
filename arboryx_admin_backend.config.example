@@ -1,0 +1,20 @@
+PROJECT_ID="your project id"
+LOCATION="your location"
+SA_EMAIL="your service account email"
+STORAGE_BUCKET="your bucket name"
+GCS_DATA_PATH="gs://your bucket name/your data path"
+
+# === CLOUD FUNCTION DEPLOYMENT ===
+FUNCTION_NAME="your function name"
+FUNCTION_RUNTIME="python312"
+FUNCTION_TIMEOUT="60s"
+FUNCTION_MEMORY="256Mi"
+
+# === API SETTINGS ===
+API_KEY=""              # Generate with: python3 -c "import secrets; print(secrets.token_urlsafe(32))"
+CACHE_TTL_SECONDS="0"              # 0 = never expire (only refresh via ?action=refresh or cold start)
+
+# === SCHEDULER (optional, for cache refresh etc.) ===
+# SCHEDULER_NAME="your scheduler name"
+# SCHEDULE_INTERVAL="0 8 * * *"
+# TIMEZONE="America/New_York"

@@ -1,6 +1,6 @@
-# AlphaSnap UI
+# Arboryx Admin
 
-Frontend + API layer for the AlphaSnap market intelligence system. Surfaces daily findings collected by the AlphaSnap agent pipelines through a browser-based dashboard.
+Frontend + API layer for the Arboryx market intelligence system. Surfaces daily findings collected by the arboryx.ai agent pipelines through a browser-based dashboard.
 
 ## Architecture
 
@@ -17,7 +17,7 @@ Frontend + API layer for the AlphaSnap market intelligence system. Surfaces dail
 
 **API Backend** (`cloud_function/main.py`) — 2nd-gen Google Cloud Function serving filtered JSON over HTTP. Reads the master findings log from GCS, caches in memory, and exposes endpoints for findings, categories, stats, and cache management. All endpoints except health check require an API key.
 
-**Frontend** (`market_findings_3.0.html`) — Single-file SPA with no build step. Loads data from the API in chunks on first visit, caches in `sessionStorage` for the tab lifetime, and does incremental delta refreshes. Dark theme, category tabs, search, date filtering, pagination.
+**Frontend** (`arborist_*.html`) — Single-file SPA with no build step. Loads data from the API in chunks on first visit, caches in `sessionStorage` for the tab lifetime, and does incremental delta refreshes. Dark theme, category tabs, search, date filtering, pagination. Current deploy target is set in `arboryx_admin_ui.config`.
 
 ### API Endpoints
 
@@ -42,13 +42,13 @@ Frontend + API layer for the AlphaSnap market intelligence system. Surfaces dail
 
 ```bash
 # Copy example configs and fill in your values
-cp as_backend.config.example as_backend.config
-cp ui_config.config.example ui_config.config
+cp arboryx_admin_backend.config.example arboryx_admin_backend.config
+cp arboryx_admin_ui.config.example arboryx_admin_ui.config
 ```
 
-`as_backend.config` — GCP project, bucket, function name, API key, deploy settings.
+`arboryx_admin_backend.config` — GCP project, bucket, function name, API key, deploy settings.
 
-`ui_config.config` — UI filename, API URL, and API key (injected at deploy time).
+`arboryx_admin_ui.config` — UI filename, API URL, and API key (injected at deploy time).
 
 ### 2. Dev environment
 
@@ -104,7 +104,7 @@ bash deploy_cloud_func.sh --full
 bash deploy_cloud_func.sh --dry-run
 ```
 
-Reads all settings from `as_backend.config`.
+Reads all settings from `arboryx_admin_backend.config`.
 
 ### UI Frontend
 
@@ -116,23 +116,25 @@ bash deploy_ui.sh
 bash deploy_ui.sh --dry-run
 ```
 
-The deploy script injects `API_URL` and `API_KEY` from `ui_config.config` into a temp copy of the HTML file, uploads it to GCS, and sets public read on that single object. The source file in git only contains placeholders.
+The deploy script injects `API_URL` and `API_KEY` from `arboryx_admin_ui.config` into a temp copy of the HTML file, uploads it to GCS, and sets public read on that single object. The source file in git only contains placeholders.
 
 ## Project Structure
 
 ```
-alphasnap-ui/
+arboryx-admin/
   cloud_function/
     main.py              # Cloud Function API handler
     requirements.txt     # google-cloud-storage
   dev-utils/
     test_api_local.py    # Local test (direct GCS)
     test_api.py          # Remote test (HTTP against deployed API)
+    test_ui_render.js    # Headless UI render smoke test
+    test_ui_live.js      # Headless UI test against live API
     make_dev_env_ready.sh
     run-logs/            # Test result logs (gitignored)
-  market_findings_3.0.html  # Frontend SPA (placeholders, no secrets)
-  deploy_cloud_func.sh      # API deploy script
-  deploy_ui.sh              # UI deploy script
-  as_backend.config.example  # API config template
-  ui_config.config.example   # UI config template
+  arborist_*.html                     # Frontend SPA (placeholders, no secrets)
+  deploy_cloud_func.sh                # API deploy script
+  deploy_ui.sh                        # UI deploy script
+  arboryx_admin_backend.config.example  # API config template
+  arboryx_admin_ui.config.example       # UI config template
 ```

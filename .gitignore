@@ -4,6 +4,6 @@ node_modules/
 dev-utils/run-logs/*.json
 dev-utils/service_account.json
 __pycache__/
-as_backend.config
-ui_config.config
+arboryx_admin_backend.config
+arboryx_admin_ui.config
 notes.txt

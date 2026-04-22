@@ -1,6 +1,6 @@
 #!/bin/bash
 # deploy_cloud_func.sh
-# Unified deploy script for the AlphaSnap UI API backend.
+# Unified deploy script for the Arboryx Admin API backend.
 #
 # Behaviour:
 #   - If the Cloud Function already exists  -> source-only update + env var sync
@@ -57,7 +57,7 @@ done
 # Load config
 # ---------------------------------------------------------------------------
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CONFIG_FILE="$SCRIPT_DIR/as_backend.config"
+CONFIG_FILE="$SCRIPT_DIR/arboryx_admin_backend.config"
 
 if [[ ! -f "$CONFIG_FILE" ]]; then
     err "Config file not found: $CONFIG_FILE"
@@ -79,7 +79,7 @@ API_KEY="${API_KEY:-}"
 
 if [[ -z "$API_KEY" ]]; then
     warn "API_KEY is not set. The function will deploy without authentication."
-    warn "Set API_KEY in as_backend.config or pass via: API_KEY=<key> bash deploy_cloud_func.sh"
+    warn "Set API_KEY in arboryx_admin_backend.config or pass via: API_KEY=<key> bash deploy_cloud_func.sh"
     echo ""
     read -rp "Continue without API key? [y/N] " confirm
     if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
@@ -105,7 +105,7 @@ fi
 # Check if function already exists
 # ---------------------------------------------------------------------------
 header "============================================"
-header "  AlphaSnap UI API — Deploy"
+header "  Arboryx Admin API — Deploy"
 header "============================================"
 echo ""
 

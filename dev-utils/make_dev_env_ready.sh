@@ -4,14 +4,14 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-source "$SCRIPT_DIR/../as_backend.config"
+source "$SCRIPT_DIR/../arboryx_admin_backend.config"
 
 SVC_ACCOUNT_KEY="$SCRIPT_DIR/service_account.json"
 
 if [ ! -f "$SVC_ACCOUNT_KEY" ]; then
     echo "Error: Service account key not found at $SVC_ACCOUNT_KEY"
-    echo "Copy it from the alphasnap project:"
-    echo "  cp ../alphasnap/dev-utils/service_account.json dev-utils/"
+    echo "Copy it from the arboryx.ai project:"
+    echo "  cp ../arboryx.ai/dev-utils/service_account.json dev-utils/"
     exit 1
 fi
 

@@ -1,0 +1,1745 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Arboryx Admin</title>
+  <link
+    href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=JetBrains+Mono:wght@300;400;500&display=swap"
+    rel="stylesheet">
+  <style>
+    *,
+    *::before,
+    *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    :root {
+      --bg: #080b10;
+      --surface: #0e1420;
+      --surface2: #121a28;
+      --border: #1c2740;
+      --border2: #243050;
+      --text: #c8d6f0;
+      --muted: #4a5e80;
+      --dim: #2a3a58;
+      --accent: #f0b840;
+      --accent2: #3de8b0;
+      --accent3: #5b9cf6;
+      --danger: #f04860;
+      --cat0: #a78bfa;
+      --cat1: #3de8b0;
+      --cat2: #5b9cf6;
+      --cat3: #f0b840;
+      --cat4: #f07840;
+      --cat5: #80e040;
+      --cat6: #f04860;
+      --cat7: #38bdf8;
+      --cat8: #fb923c;
+      --cat9: #a3e635;
+    }
+
+    html,
+    body {
+      height: 100%;
+      overflow: hidden;
+      font-family: 'JetBrains Mono', monospace;
+      background: var(--bg);
+      color: var(--text);
+    }
+
+    #app {
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+    }
+
+    /* -- HEADER -- */
+    header {
+      flex-shrink: 0;
+      background: rgba(8, 11, 16, 0.98);
+      border-bottom: 1px solid var(--border);
+      padding: 0 20px;
+    }
+
+    .header-top {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 11px 0 9px;
+    }
+
+    .logo {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-shrink: 0;
+    }
+
+    .logo-icon {
+      width: 38px;
+      height: 38px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+
+    .logo-text {
+      font-family: 'Syne', sans-serif;
+      font-size: 12px;
+      font-weight: 700;
+      color: #fff;
+      letter-spacing: .05em;
+      text-transform: uppercase;
+      line-height: 1.2;
+    }
+
+    .logo-sub {
+      font-size: 8px;
+      color: var(--muted);
+      letter-spacing: .15em;
+      text-transform: uppercase;
+    }
+
+    /* feed status bar */
+    .feed-status {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: var(--surface);
+      border: 1px solid var(--border2);
+      border-radius: 7px;
+      padding: 0 12px;
+      height: 32px;
+      position: relative;
+      overflow: hidden;
+      transition: border-color .3s;
+    }
+
+    .feed-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--muted);
+      flex-shrink: 0;
+      transition: background .3s, box-shadow .3s;
+    }
+
+    .feed-dot.live {
+      background: var(--accent2);
+      box-shadow: 0 0 6px var(--accent2);
+    }
+
+    .feed-dot.loading {
+      background: var(--accent3);
+      animation: pulse 1s ease infinite;
+    }
+
+    .feed-dot.error {
+      background: var(--danger);
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: .3; }
+    }
+
+    .feed-text {
+      font-size: 10px;
+      color: var(--muted);
+      white-space: nowrap;
+      flex-shrink: 0;
+      transition: color .3s;
+    }
+
+    .feed-text .count {
+      color: var(--text);
+      font-weight: 500;
+    }
+
+    .feed-text .delta {
+      color: var(--accent2);
+    }
+
+    .feed-progress {
+      flex: 1;
+      height: 2px;
+      background: var(--border);
+      border-radius: 1px;
+      overflow: hidden;
+      opacity: 0;
+      transition: opacity .3s;
+    }
+
+    .feed-progress.active {
+      opacity: 1;
+    }
+
+    .feed-bar {
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, var(--accent3), var(--accent2));
+      border-radius: 1px;
+      transition: width .25s ease;
+    }
+
+    .refresh-btn {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      background: rgba(240, 184, 64, .08);
+      border: 1px solid rgba(240, 184, 64, .3);
+      border-radius: 6px;
+      padding: 5px 12px;
+      color: var(--accent);
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 10px;
+      cursor: pointer;
+      transition: all .15s;
+      white-space: nowrap;
+      flex-shrink: 0;
+      letter-spacing: .04em;
+    }
+
+    .refresh-btn:hover {
+      background: rgba(240, 184, 64, .15);
+      border-color: var(--accent);
+    }
+
+    .refresh-btn:disabled {
+      opacity: .4;
+      cursor: default;
+    }
+
+    .refresh-btn.spinning .icon {
+      display: inline-block;
+      animation: spin .6s linear infinite;
+    }
+
+    @keyframes spin {
+      to {
+        transform: rotate(360deg);
+      }
+    }
+
+    /* controls */
+    .controls-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 0 9px;
+      flex-wrap: wrap;
+    }
+
+    .search-wrap {
+      position: relative;
+      flex: 1;
+      min-width: 160px;
+      max-width: 400px;
+    }
+
+    .search-wrap input {
+      width: 100%;
+      background: var(--surface);
+      border: 1px solid var(--border2);
+      border-radius: 6px;
+      padding: 6px 28px 6px 30px;
+      color: var(--text);
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px;
+      outline: none;
+      transition: border-color .2s, box-shadow .2s;
+    }
+
+    .search-wrap input:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 2px rgba(240, 184, 64, .1);
+    }
+
+    .search-wrap input::placeholder {
+      color: var(--muted);
+    }
+
+    .s-icon {
+      position: absolute;
+      left: 10px;
+      top: 50%;
+      transform: translateY(-50%);
+      color: var(--muted);
+      font-size: 13px;
+      pointer-events: none;
+    }
+
+    .s-clear {
+      position: absolute;
+      right: 7px;
+      top: 50%;
+      transform: translateY(-50%);
+      background: none;
+      border: none;
+      color: var(--muted);
+      cursor: pointer;
+      font-size: 13px;
+      opacity: 0;
+      transition: opacity .2s;
+      padding: 2px;
+    }
+
+    .s-clear.vis {
+      opacity: 1;
+    }
+
+    .s-clear:hover {
+      color: var(--text);
+    }
+
+    .search-wrap.disabled input {
+      opacity: 0.3;
+      cursor: not-allowed;
+      pointer-events: none;
+    }
+
+    .search-wrap.disabled .s-icon {
+      opacity: 0.3;
+    }
+
+    /* clickable sort toggle */
+    .sort-toggle {
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      border-radius: 3px;
+      padding: 1px 4px;
+      transition: background .15s;
+    }
+
+    .sort-toggle:hover {
+      background: rgba(61, 232, 176, 0.1);
+    }
+
+    .sort-arrow {
+      font-size: 11px;
+      transition: transform .2s;
+    }
+
+    .div-pipe {
+      color: var(--border2);
+      font-size: 11px;
+    }
+
+    .date-label {
+      font-size: 9px;
+      text-transform: uppercase;
+      letter-spacing: .14em;
+      color: var(--muted);
+      white-space: nowrap;
+    }
+
+    .preset-group {
+      display: flex;
+      gap: 3px;
+    }
+
+    .preset-btn {
+      background: var(--surface);
+      border: 1px solid var(--border2);
+      border-radius: 4px;
+      padding: 4px 8px;
+      color: var(--muted);
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 9px;
+      cursor: pointer;
+      transition: all .15s;
+      white-space: nowrap;
+    }
+
+    .preset-btn:hover {
+      color: var(--text);
+    }
+
+    .preset-btn.active {
+      background: rgba(240, 184, 64, .1);
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+
+    .custom-dates {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    input[type="date"] {
+      background: var(--surface);
+      border: 1px solid var(--border2);
+      border-radius: 4px;
+      padding: 4px 7px;
+      color: var(--text);
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 9px;
+      outline: none;
+      cursor: pointer;
+      color-scheme: dark;
+      transition: border-color .2s;
+    }
+
+    input[type="date"]:focus {
+      border-color: var(--accent3);
+    }
+
+    .date-arr {
+      color: var(--muted);
+      font-size: 9px;
+    }
+
+    .clr-dates {
+      background: none;
+      border: 1px solid var(--border2);
+      border-radius: 4px;
+      padding: 3px 7px;
+      color: var(--muted);
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 9px;
+      cursor: pointer;
+      transition: all .15s;
+    }
+
+    .clr-dates:hover {
+      color: var(--danger);
+      border-color: var(--danger);
+    }
+
+    /* -- CAT TABS -- */
+    .cat-tabs {
+      flex-shrink: 0;
+      display: flex;
+      gap: 2px;
+      padding: 0 20px;
+      border-bottom: 1px solid var(--border);
+      overflow-x: auto;
+      scrollbar-width: none;
+      background: rgba(8, 11, 16, 0.98);
+    }
+
+    .cat-tabs::-webkit-scrollbar {
+      display: none;
+    }
+
+    .cat-tab {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      padding: 7px 11px 9px;
+      border: none;
+      background: none;
+      color: var(--muted);
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 10px;
+      cursor: pointer;
+      white-space: nowrap;
+      border-bottom: 2px solid transparent;
+      margin-bottom: -1px;
+      transition: color .2s;
+      letter-spacing: .03em;
+    }
+
+    .cat-tab:hover {
+      color: var(--text);
+    }
+
+    .cat-tab.active {
+      color: #fff;
+      border-bottom-color: var(--tc);
+    }
+
+    .cat-dot {
+      width: 5px;
+      height: 5px;
+      border-radius: 50%;
+      background: var(--tc);
+      opacity: .5;
+    }
+
+    .cat-tab.active .cat-dot {
+      opacity: 1;
+    }
+
+    .cat-badge {
+      background: rgba(255, 255, 255, .05);
+      border-radius: 20px;
+      padding: 1px 5px;
+      font-size: 8.5px;
+      color: var(--muted);
+    }
+
+    .cat-tab.active .cat-badge {
+      color: var(--text);
+      background: rgba(255, 255, 255, .09);
+    }
+
+    /* -- SCROLL AREA -- */
+    .scroll-area {
+      flex: 1;
+      overflow-y: auto;
+      padding: 12px 14px 8px;
+    }
+
+    .scroll-area::-webkit-scrollbar {
+      width: 4px;
+    }
+
+    .scroll-area::-webkit-scrollbar-track {
+      background: var(--bg);
+    }
+
+    .scroll-area::-webkit-scrollbar-thumb {
+      background: var(--border2);
+      border-radius: 2px;
+    }
+
+    .result-meta {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 9px;
+      padding-bottom: 9px;
+      border-bottom: 1px solid var(--border);
+      font-size: 10px;
+    }
+
+    .rm-left {
+      color: var(--muted);
+    }
+
+    .rm-left strong {
+      color: var(--text);
+    }
+
+    .rm-right {
+      color: var(--muted);
+    }
+
+    .rm-right span {
+      color: var(--accent2);
+    }
+
+    /* -- CARDS -- */
+    .findings-list {
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+    }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 7px;
+      padding: 12px 14px 12px 14px;
+      display: grid;
+      grid-template-columns: 36px 1fr;
+      gap: 0 14px;
+      position: relative;
+      transition: border-color .18s, background .18s;
+      animation: fu .18s ease both;
+    }
+
+    @keyframes fu {
+      from {
+        opacity: 0;
+        transform: translateY(3px);
+      }
+
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    .card::before {
+      content: '';
+      position: absolute;
+      left: 0;
+      top: 0;
+      bottom: 0;
+      width: 3px;
+      background: var(--cc);
+      opacity: .5;
+      transition: opacity .2s;
+      border-radius: 7px 0 0 7px;
+    }
+
+    .card:hover {
+      border-color: var(--border2);
+      background: #0f1825;
+    }
+
+    .card:hover::before {
+      opacity: 1;
+    }
+
+    .card-num {
+      font-size: 11px;
+      color: var(--muted);
+      text-align: right;
+      padding-top: 1px;
+    }
+
+    .field-title {
+      font-family: 'Syne', sans-serif;
+      font-size: 14px;
+      font-weight: 600;
+      color: #8fa8cc;
+      line-height: 1.45;
+      margin-bottom: 8px;
+    }
+
+    .field-rows {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .field-row {
+      display: flex;
+      gap: 8px;
+      align-items: baseline;
+    }
+
+    .field-label {
+      font-size: 9.5px;
+      text-transform: uppercase;
+      letter-spacing: .1em;
+      color: var(--muted);
+      flex-shrink: 0;
+      min-width: 80px;
+      max-width: 120px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .field-val {
+      font-size: 12.5px;
+      color: #7a90b8;
+      line-height: 1.5;
+      flex: 1;
+      word-break: break-word;
+    }
+
+    .field-val.hl-price {
+      color: var(--accent);
+      font-size: 12px;
+    }
+
+    /* bullet list for takeaways */
+    .bullet-list {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+      flex: 1;
+    }
+
+    .bullet-list li {
+      display: flex;
+      gap: 6px;
+      align-items: baseline;
+      font-size: 12.5px;
+      color: #7a90b8;
+      line-height: 1.5;
+    }
+
+    .bullet-list li::before {
+      content: '\2013';
+      color: var(--accent2);
+      flex-shrink: 0;
+    }
+
+    .cat-tag {
+      font-size: 9px;
+      text-transform: uppercase;
+      letter-spacing: .11em;
+      padding: 1px 6px;
+      border-radius: 20px;
+      border: 1px solid var(--cc);
+      color: var(--cc);
+      background: rgba(255, 255, 255, .03);
+    }
+
+    .ts-val {
+      font-size: 11px;
+      color: var(--muted);
+    }
+
+    mark {
+      background: rgba(240, 184, 64, .2);
+      color: var(--accent);
+      border-radius: 2px;
+      padding: 0 1px;
+    }
+
+    /* sentiment word colours */
+    .sent-very-bullish {
+      color: #00e676;
+      font-weight: 700;
+    }
+
+    .sent-bullish {
+      color: #69f0ae;
+      font-weight: 700;
+    }
+
+    .sent-neutral {
+      color: #ffd740;
+      font-weight: 700;
+    }
+
+    .sent-bearish {
+      color: #ff6d00;
+      font-weight: 700;
+    }
+
+    .sent-very-bearish {
+      color: #ff1744;
+      font-weight: 700;
+    }
+
+    /* inline bold+underline labels inside sentiment text */
+    .sent-sublabel {
+      font-weight: 700;
+      text-decoration: underline;
+      color: #9ab0cc;
+    }
+
+    /* -- STATES -- */
+    .state-box {
+      text-align: center;
+      padding: 50px 20px;
+      color: var(--muted);
+    }
+
+    .state-icon {
+      font-size: 28px;
+      margin-bottom: 10px;
+    }
+
+    .state-box h3 {
+      font-family: 'Syne', sans-serif;
+      color: var(--text);
+      margin-bottom: 6px;
+      font-size: 14px;
+    }
+
+    .state-box p {
+      font-size: 10.5px;
+      line-height: 1.7;
+    }
+
+    .state-box code {
+      color: var(--accent);
+      background: rgba(240, 184, 64, .08);
+      padding: 1px 5px;
+      border-radius: 3px;
+    }
+
+    .error-box {
+      text-align: center;
+      padding: 40px 20px;
+      color: var(--muted);
+    }
+
+    .error-box .err-icon {
+      font-size: 24px;
+      margin-bottom: 8px;
+      color: var(--danger);
+    }
+
+    .error-box h3 {
+      color: var(--danger);
+      font-family: 'Syne', sans-serif;
+      margin-bottom: 6px;
+      font-size: 13px;
+    }
+
+    .error-box p {
+      font-size: 10.5px;
+    }
+
+    /* -- PAGINATION -- */
+    .pagination {
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 20px;
+      border-top: 1px solid var(--border);
+      background: rgba(8, 11, 16, 0.98);
+      gap: 10px;
+    }
+
+    .page-info {
+      font-size: 9.5px;
+      color: var(--muted);
+      white-space: nowrap;
+    }
+
+    .page-info strong {
+      color: var(--text);
+    }
+
+    .page-controls {
+      display: flex;
+      align-items: center;
+      gap: 3px;
+    }
+
+    .pg-btn {
+      background: var(--surface);
+      border: 1px solid var(--border2);
+      border-radius: 4px;
+      padding: 4px 9px;
+      color: var(--muted);
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 9.5px;
+      cursor: pointer;
+      transition: all .15s;
+      min-width: 28px;
+      text-align: center;
+    }
+
+    .pg-btn:hover:not(:disabled) {
+      color: var(--text);
+      border-color: var(--muted);
+    }
+
+    .pg-btn.active {
+      background: rgba(240, 184, 64, .12);
+      border-color: var(--accent);
+      color: var(--accent);
+      font-weight: 600;
+    }
+
+    .pg-btn:disabled {
+      opacity: .25;
+      cursor: default;
+    }
+
+    .pg-btn.arr {
+      font-size: 12px;
+      padding: 4px 7px;
+    }
+
+    .pg-ellipsis {
+      font-size: 9.5px;
+      color: var(--muted);
+      padding: 0 2px;
+    }
+
+    .per-pg {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 9.5px;
+      color: var(--muted);
+    }
+
+    .per-pg select {
+      background: var(--surface);
+      border: 1px solid var(--border2);
+      border-radius: 4px;
+      padding: 3px 5px;
+      color: var(--text);
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 9.5px;
+      outline: none;
+      cursor: pointer;
+      color-scheme: dark;
+    }
+  </style>
+</head>
+
+<body>
+  <div id="app">
+
+    <header>
+      <div class="header-top">
+        <div class="logo">
+          <div class="logo-icon">
+            <svg width="38" height="38" viewBox="0 0 38 38" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <defs>
+                <filter id="glow" x="-40%" y="-40%" width="180%" height="180%">
+                  <feGaussianBlur stdDeviation="1.8" result="blur" />
+                  <feMerge>
+                    <feMergeNode in="blur" />
+                    <feMergeNode in="SourceGraphic" />
+                  </feMerge>
+                </filter>
+              </defs>
+              <ellipse cx="12" cy="24" rx="6" ry="4" fill="#1c2e48" opacity="0.9" />
+              <ellipse cx="17" cy="22" rx="7" ry="5" fill="#1c2e48" opacity="0.9" />
+              <ellipse cx="24" cy="24" rx="5.5" ry="4" fill="#1c2e48" opacity="0.9" />
+              <ellipse cx="18" cy="26" rx="9" ry="3.5" fill="#1c2e48" opacity="0.9" />
+              <ellipse cx="12" cy="24" rx="6" ry="4" stroke="#243050" stroke-width="0.8" fill="none" />
+              <ellipse cx="17" cy="22" rx="7" ry="5" stroke="#243050" stroke-width="0.8" fill="none" />
+              <ellipse cx="24" cy="24" rx="5.5" ry="4" stroke="#243050" stroke-width="0.8" fill="none" />
+              <g filter="url(#glow)" transform="rotate(-45 19 19)">
+                <path d="M19 5 L22.5 13 L15.5 13 Z" fill="#f0b840" />
+                <rect x="15.5" y="13" width="7" height="11" rx="1" fill="#f0b840" />
+                <circle cx="19" cy="17" r="2" fill="#080b10" />
+                <circle cx="19" cy="17" r="1.1" fill="#5b9cf6" />
+                <path d="M15.5 21 L12 26 L15.5 24 Z" fill="#d4952a" />
+                <path d="M22.5 21 L26 26 L22.5 24 Z" fill="#d4952a" />
+                <path d="M17 24 Q19 30 21 24" fill="#f07840" opacity="0.9" />
+                <path d="M17.8 24 Q19 27.5 20.2 24" fill="#fff" opacity="0.5" />
+              </g>
+              <line x1="2" y1="14" x2="9" y2="14" stroke="#f0b840" stroke-width="1" stroke-linecap="round"
+                opacity="0.5" />
+              <line x1="1" y1="18" x2="7" y2="18" stroke="#f0b840" stroke-width="0.7" stroke-linecap="round"
+                opacity="0.3" />
+              <line x1="3" y1="22" x2="8" y2="22" stroke="#f0b840" stroke-width="0.7" stroke-linecap="round"
+                opacity="0.3" />
+            </svg>
+          </div>
+          <div>
+            <div class="logo-text">Arboryx</div>
+            <div class="logo-sub">AI-Tech Data Edge</div>
+          </div>
+        </div>
+
+        <!-- Live feed status -->
+        <div class="feed-status" id="feedStatus">
+          <span class="feed-dot" id="feedDot"></span>
+          <span class="feed-text" id="feedText">Initializing...</span>
+          <div class="feed-progress" id="feedProgress">
+            <div class="feed-bar" id="feedBar"></div>
+          </div>
+        </div>
+
+        <!-- Refresh -->
+        <button class="refresh-btn" id="refreshBtn">
+          <span class="icon" id="refreshIcon">&#8635;</span> Refresh
+        </button>
+      </div>
+
+      <div class="controls-row">
+        <div class="search-wrap">
+          <span class="s-icon">&#8981;</span>
+          <input type="text" id="searchInput" placeholder="Search all columns..." autocomplete="off">
+          <button class="s-clear" id="clearSearch">&#10005;</button>
+        </div>
+        <span class="div-pipe">|</span>
+        <span class="date-label" id="dateFilterLabel" style="display:none">Date</span>
+        <div class="preset-group" id="presets" style="display:none">
+          <button class="preset-btn active" data-preset="all">All</button>
+          <button class="preset-btn" data-preset="today">Today</button>
+          <button class="preset-btn" data-preset="yesterday">Yesterday</button>
+          <button class="preset-btn" data-preset="7d">7 days</button>
+          <button class="preset-btn" data-preset="30d">30 days</button>
+        </div>
+        <div class="custom-dates" id="customDates" style="display:none">
+          <input type="date" id="dateFrom">
+          <span class="date-arr">&rarr;</span>
+          <input type="date" id="dateTo">
+          <button class="clr-dates" id="clearDates">&#10005;</button>
+        </div>
+      </div>
+    </header>
+
+    <nav class="cat-tabs" id="catTabs"></nav>
+
+    <div class="scroll-area" id="scrollArea">
+      <div class="result-meta" id="resultMeta" style="display:none">
+        <div class="rm-left" id="rmLeft">&mdash;</div>
+        <div class="rm-right" id="rmRight">&mdash;</div>
+      </div>
+      <div id="findingsList"></div>
+    </div>
+
+    <div class="pagination">
+      <div class="page-info" id="pageInfo">&mdash;</div>
+      <div class="page-controls" id="pageControls"></div>
+      <div class="per-pg">
+        Rows / page
+        <select id="perPageSelect">
+          <option value="5">5</option>
+          <option value="10" selected>10</option>
+          <option value="15">15</option>
+          <option value="25">25</option>
+        </select>
+      </div>
+    </div>
+
+  </div>
+  <script>
+    /* ================================================================
+       Arboryx Admin 3.0 — API-driven, chunk-loaded, session-cached viewer
+       ================================================================ */
+
+    // -- API CONFIG --
+    const API_URL = '__ARBORYX_ADMIN_API_URL__';
+    const API_KEY = '__ARBORYX_ADMIN_API_KEY__';
+    const CHUNK_SIZE = 100;
+    const SESSION_KEY = 'arboryx_admin_v1';
+
+    // -- DISPLAY CONFIG --
+    const CONFIG = {
+      TITLE_FIELD: 'finding',
+      CATEGORY_FIELD: 'category',
+      TIMESTAMP_FIELD: 'timestamp',
+      SORT_FIELD: 'timestamp',
+      SORT_DIR: 'desc',
+      PRICE_FIELDS: ['price_levels'],
+      BULLET_FIELDS: [],
+      SENTIMENT_FIELDS: ['sentiment_takeaways'],
+      COLUMN_CONFIG: {
+        entry_id:   { skip: true },
+        source_url: { skip: true },
+      },
+    };
+
+    // -- PALETTE --
+    const PALETTE = [
+      'var(--cat0)', 'var(--cat1)', 'var(--cat2)', 'var(--cat3)', 'var(--cat4)',
+      'var(--cat5)', 'var(--cat6)', 'var(--cat7)', 'var(--cat8)', 'var(--cat9)',
+    ];
+    const catColorMap = {};
+    let paletteIdx = 0;
+    function catColor(val) {
+      if (!val) return 'var(--muted)';
+      if (!catColorMap[val]) catColorMap[val] = PALETTE[paletteIdx++ % PALETTE.length];
+      return catColorMap[val];
+    }
+
+    // -- STATE --
+    let RAW = [];
+    let DATA = [];
+    let COLS = [];
+    let TSCOL = null;
+    let _serverTotal = 0;
+    let _isChunkLoading = false;
+
+    const state = {
+      cat: 'All',
+      query: '',
+      from: null,
+      to: null,
+      preset: 'all',
+      page: 1,
+      perPage: 10,
+      loaded: false,
+      loading: false,
+      error: null,
+    };
+
+    // -- UTILS --
+    function esc(s) {
+      return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+    function escRe(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+    function hi(text, q) {
+      if (!q) return esc(text);
+      return esc(text).replace(new RegExp(`(${escRe(q)})`, 'gi'), '<mark>$1</mark>');
+    }
+    function fmtVal(val) {
+      if (val == null) return '\u2014';
+      if (typeof val === 'object') return JSON.stringify(val);
+      return String(val);
+    }
+    function parseTS(v) {
+      if (!v) return null;
+      const s = String(v).trim();
+      if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+        const d = new Date(s + 'T00:00:00');
+        if (!isNaN(d)) return d;
+      }
+      if (/^\d/.test(s)) {
+        const iso = new Date(s.replace(' ', 'T'));
+        if (!isNaN(iso)) return iso;
+      }
+      const rangeMatch = s.match(/([A-Za-z]+)\s+(\d{1,2})\s*[\u2013\u2014\-]\s*\d{1,2},?\s*(\d{4})/);
+      if (rangeMatch) {
+        const d = new Date(`${rangeMatch[1]} ${rangeMatch[2]}, ${rangeMatch[3]}`);
+        if (!isNaN(d)) return d;
+      }
+      const natMatch = s.match(/([A-Za-z]+\s+\d{1,2},?\s*\d{4}|\d{1,2}\s+[A-Za-z]+\s+\d{4})/);
+      if (natMatch) {
+        const d = new Date(natMatch[1]);
+        if (!isNaN(d)) return d;
+      }
+      return null;
+    }
+    function fmtTS(v) {
+      const d = parseTS(v);
+      if (!d) return esc(v);
+      return d.toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    }
+    function toISO(d) { return d.toISOString().split('T')[0]; }
+    function colLabel(key) {
+      if (CONFIG.COLUMN_CONFIG[key]?.label) return CONFIG.COLUMN_CONFIG[key].label;
+      return key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+    }
+
+    // -- SENTIMENT RENDERING --
+    // Format expected:
+    //   "<Sentiment>. <takeaway1>. <takeaway2>. ..."
+    // Sentiment is the first sentence (e.g. "Bullish", "Very Bullish", "Neutral/Bullish").
+    // Takeaways may or may not carry a "Direct:", "Indirect:", "Market Dynamics:" label.
+    // Some older rows instead place the sentiment at the end as "Sentiment: <word>."
+    function renderSentimentVal(text, q) {
+      const SENT_MAP = {
+        'very bullish': 'sent-very-bullish',
+        'bullish': 'sent-bullish',
+        'neutral': 'sent-neutral',
+        'bearish': 'sent-bearish',
+        'very bearish': 'sent-very-bearish',
+      };
+      const SENT_RE = /^(very bullish|bullish|neutral|bearish|very bearish)\b/i;
+      const LABEL_RE = /^((?:Direct|Indirect|Market)(?:\s+Dynamics|\s+Impact)?|Sentiment):\s*/i;
+
+      const cleaned = String(text).replace(/\*\*/g, '').trim();
+      const sentences = cleaned
+        .split(/\.\s+|\s*\|\s*/)
+        .map(s => s.trim().replace(/\.+$/, ''))
+        .filter(Boolean);
+
+      let sentimentText = null;
+      const rest = [...sentences];
+      if (rest[0] && SENT_RE.test(rest[0])) {
+        sentimentText = rest.shift();
+      } else {
+        const idx = rest.findIndex(s => /^sentiment:/i.test(s));
+        if (idx >= 0) sentimentText = rest.splice(idx, 1)[0].replace(/^sentiment:\s*/i, '');
+      }
+
+      function colourSentiment(s) {
+        const re = new RegExp('(' + Object.keys(SENT_MAP).join('|') + ')', 'gi');
+        let last = 0, html = '', m;
+        while ((m = re.exec(s)) !== null) {
+          if (m.index > last) html += hi(s.slice(last, m.index), q);
+          html += `<span class="${SENT_MAP[m[0].toLowerCase()]}">${hi(m[0], q)}</span>`;
+          last = m.index + m[0].length;
+        }
+        if (last < s.length) html += hi(s.slice(last), q);
+        return html || hi(s, q);
+      }
+
+      function renderBullet(s) {
+        const m = s.match(LABEL_RE);
+        if (m) {
+          return `<span class="sent-sublabel">${esc(m[1])}:</span> ${hi(s.slice(m[0].length), q)}`;
+        }
+        return hi(s, q);
+      }
+
+      const sentimentHtml = sentimentText ? colourSentiment(sentimentText) : '';
+      const bullets = rest.map(b => `<li>${renderBullet(b)}</li>`).join('');
+
+      if (!sentimentHtml && !bullets) return `<span class="field-val">${hi(cleaned, q)}</span>`;
+
+      return `<div class="field-val" style="display:flex;flex-direction:column;gap:4px;">
+    ${sentimentHtml ? `<span>${sentimentHtml}</span>` : ''}
+    ${bullets ? `<ul class="bullet-list">${bullets}</ul>` : ''}
+  </div>`;
+    }
+
+    function toBullets(text) {
+      const parts = text
+        .split(/\n|(?<=\.)\s{1,2}(?=[A-Z\u2013\-])/)
+        .map(s => s.trim())
+        .filter(Boolean);
+      return parts.length > 1 ? parts : [text.trim()];
+    }
+
+    // ================================================================
+    //  API + SESSION STORAGE LAYER
+    // ================================================================
+
+    async function apiFetch(params) {
+      const qs = new URLSearchParams(params).toString();
+      const resp = await fetch(`${API_URL}?${qs}`, {
+        headers: { 'X-API-Key': API_KEY },
+        cache: 'no-store',
+      });
+      if (!resp.ok) throw new Error(`API ${resp.status} ${resp.statusText}`);
+      return resp.json();
+    }
+
+    function saveToSession() {
+      try {
+        sessionStorage.setItem(SESSION_KEY, JSON.stringify({
+          entries: RAW,
+          total: RAW.length,
+          savedAt: Date.now(),
+        }));
+      } catch (e) { /* quota exceeded — ignore */ }
+    }
+
+    function loadFromSession() {
+      try {
+        const raw = sessionStorage.getItem(SESSION_KEY);
+        if (!raw) return null;
+        return JSON.parse(raw);
+      } catch { return null; }
+    }
+
+    // -- FEED STATUS UI --
+    function updateFeed(status, count, extra, msg) {
+      const dot = document.getElementById('feedDot');
+      const text = document.getElementById('feedText');
+      const progress = document.getElementById('feedProgress');
+      const bar = document.getElementById('feedBar');
+
+      dot.className = 'feed-dot';
+      progress.classList.remove('active');
+
+      switch (status) {
+        case 'connecting':
+          dot.classList.add('loading');
+          text.innerHTML = 'Connecting to feed...';
+          break;
+
+        case 'loading':
+          dot.classList.add('loading');
+          text.innerHTML = `<span class="count">${count}</span> / ${extra} entries`;
+          progress.classList.add('active');
+          bar.style.width = extra > 0 ? `${(count / extra) * 100}%` : '0%';
+          break;
+
+        case 'refreshing':
+          dot.classList.add('loading');
+          text.innerHTML = 'Syncing new data...';
+          break;
+
+        case 'ready': {
+          dot.classList.add('live');
+          let html = `<span class="count">${count}</span> entries`;
+          if (extra > 0) html += ` <span class="delta">(+${extra} new)</span>`;
+          if (msg) html += ` &middot; ${esc(msg)}`;
+          text.innerHTML = html;
+          break;
+        }
+
+        case 'cached':
+          dot.classList.add('live');
+          text.innerHTML = `<span class="count">${count}</span> entries (cached)`;
+          break;
+
+        case 'error':
+          dot.classList.add('error');
+          text.innerHTML = `Error: ${esc(msg || 'unknown')}`;
+          break;
+      }
+    }
+
+    // -- CHUNK LOADER (initial full load) --
+    async function initialLoad() {
+      _isChunkLoading = true;
+      state.loading = true;
+      updateFeed('connecting');
+      spinRefresh(true);
+      setRefreshEnabled(false);
+
+      try {
+        const stats = await apiFetch({ action: 'stats' });
+        _serverTotal = stats.total_findings;
+        updateFeed('loading', 0, _serverTotal);
+
+        let allEntries = [];
+        let offset = 0;
+
+        while (offset < _serverTotal) {
+          const resp = await apiFetch({
+            action: 'findings',
+            sort: 'desc',
+            limit: String(CHUNK_SIZE),
+            offset: String(offset),
+          });
+
+          allEntries = allEntries.concat(resp.findings);
+          offset += resp.count;
+          updateFeed('loading', allEntries.length, _serverTotal);
+
+          // Render progressively: first chunk = full init, rest = incremental
+          if (allEntries.length <= CHUNK_SIZE) {
+            processData(allEntries);
+          } else {
+            incrementalUpdate(allEntries);
+          }
+
+          if (!resp.has_more) break;
+        }
+
+        _isChunkLoading = false;
+        state.loading = false;
+        updateFeed('ready', allEntries.length, 0);
+        spinRefresh(false);
+        setRefreshEnabled(true);
+        saveToSession();
+
+      } catch (e) {
+        _isChunkLoading = false;
+        state.loading = false;
+        updateFeed('error', 0, 0, e.message);
+        spinRefresh(false);
+        setRefreshEnabled(true);
+        renderError(e.message);
+      }
+    }
+
+    // -- INCREMENTAL REFRESH (delta only) --
+    async function refreshDelta() {
+      if (_isChunkLoading) return;
+      spinRefresh(true);
+      setRefreshEnabled(false);
+      updateFeed('refreshing');
+
+      try {
+        // Force server to reload from GCS
+        await apiFetch({ action: 'refresh' });
+
+        const stats = await apiFetch({ action: 'stats' });
+        const newTotal = stats.total_findings;
+        const cachedTotal = RAW.length;
+
+        if (newTotal <= cachedTotal) {
+          updateFeed('ready', cachedTotal, 0, 'Up to date');
+          spinRefresh(false);
+          setRefreshEnabled(true);
+          return;
+        }
+
+        // New entries sit at offset 0 in desc sort
+        const delta = newTotal - cachedTotal;
+        let newEntries = [];
+        let offset = 0;
+
+        while (offset < delta) {
+          const batch = Math.min(CHUNK_SIZE, delta - offset);
+          const resp = await apiFetch({
+            action: 'findings',
+            sort: 'desc',
+            limit: String(batch),
+            offset: String(offset),
+          });
+          newEntries = newEntries.concat(resp.findings);
+          offset += resp.count;
+          if (!resp.has_more) break;
+        }
+
+        // Prepend new entries to existing collection
+        RAW = [...newEntries, ...RAW];
+        _serverTotal = newTotal;
+        incrementalUpdate(RAW);
+        saveToSession();
+        updateFeed('ready', RAW.length, delta);
+        spinRefresh(false);
+        setRefreshEnabled(true);
+
+      } catch (e) {
+        updateFeed('error', RAW.length, 0, e.message);
+        spinRefresh(false);
+        setRefreshEnabled(true);
+      }
+    }
+
+    // ================================================================
+    //  DATA PROCESSING
+    // ================================================================
+
+    function processData(entries) {
+      RAW = entries;
+      state.loaded = true;
+      state.loading = false;
+      state.page = 1;
+      state.cat = 'All';
+      state.query = '';
+      state.from = null;
+      state.to = null;
+      state.preset = 'all';
+
+      Object.keys(catColorMap).forEach(k => delete catColorMap[k]);
+      paletteIdx = 0;
+
+      const sample = entries.find(r => r && typeof r === 'object') || {};
+      const allKeys = Object.keys(sample);
+
+      function resolveField(cfg, candidates) {
+        if (cfg && allKeys.includes(cfg)) return cfg;
+        if (cfg) { const l = cfg.toLowerCase(); return allKeys.find(k => k.toLowerCase() === l) || null; }
+        for (const c of candidates) { const f = allKeys.find(k => k.toLowerCase() === c.toLowerCase()); if (f) return f; }
+        return null;
+      }
+
+      CONFIG._titleField = resolveField(CONFIG.TITLE_FIELD, ['title', 'finding', 'name', 'subject', 'headline']);
+      CONFIG._categoryField = resolveField(CONFIG.CATEGORY_FIELD, ['category', 'type', 'sector', 'group']);
+      TSCOL = resolveField(CONFIG.TIMESTAMP_FIELD, ['timestamp', 'date', 'created_at', 'time']);
+
+      // Sort using parseTS for correct mixed-format ordering
+      DATA = [...entries].sort((a, b) => {
+        const ta = parseTS(a[TSCOL]) || new Date(0);
+        const tb = parseTS(b[TSCOL]) || new Date(0);
+        return CONFIG.SORT_DIR === 'desc' ? tb - ta : ta - tb;
+      });
+
+      // Categories
+      const catField = CONFIG._categoryField;
+      if (catField) {
+        const unique = [...new Set(DATA.map(r => String(r[catField] ?? '').trim()).filter(Boolean))];
+        unique.forEach(catColor);
+        CONFIG._cats = ['All', ...unique];
+      } else {
+        CONFIG._cats = [];
+      }
+
+      // Remaining columns
+      const special = new Set([CONFIG._titleField, CONFIG._categoryField, TSCOL].filter(Boolean));
+      COLS = allKeys.filter(k => !special.has(k) && !CONFIG.COLUMN_CONFIG[k]?.skip);
+
+      const hasTS = !!TSCOL;
+      document.getElementById('dateFilterLabel').style.display = hasTS ? '' : 'none';
+      document.getElementById('presets').style.display = hasTS ? '' : 'none';
+      document.getElementById('customDates').style.display = hasTS ? '' : 'none';
+      document.getElementById('searchInput').value = '';
+
+      spinRefresh(false);
+      render();
+    }
+
+    // Lightweight update: re-sort and rebuild categories without resetting state
+    function incrementalUpdate(entries) {
+      RAW = entries;
+
+      const catField = CONFIG._categoryField;
+      DATA = [...entries].sort((a, b) => {
+        const ta = parseTS(a[TSCOL]) || new Date(0);
+        const tb = parseTS(b[TSCOL]) || new Date(0);
+        return CONFIG.SORT_DIR === 'desc' ? tb - ta : ta - tb;
+      });
+
+      if (catField) {
+        const unique = [...new Set(DATA.map(r => String(r[catField] ?? '').trim()).filter(Boolean))];
+        unique.forEach(catColor);
+        CONFIG._cats = ['All', ...unique];
+      }
+
+      render();
+    }
+
+    // ================================================================
+    //  FILTER + RENDER  (unchanged from 2.95)
+    // ================================================================
+
+    function filtered() {
+      const q = state.query.toLowerCase();
+      const catField = CONFIG._categoryField;
+      return DATA.filter(item => {
+        if (state.cat !== 'All' && catField && String(item[catField] ?? '').trim() !== state.cat) return false;
+        if (TSCOL && (state.from || state.to)) {
+          const ts = parseTS(item[TSCOL]);
+          if (!ts) return false;
+          if (state.from && ts < state.from) return false;
+          if (state.to) { const e = new Date(state.to); e.setHours(23, 59, 59, 999); if (ts > e) return false; }
+        }
+        if (q) {
+          const hay = Object.values(item).join(' ').toLowerCase();
+          if (!hay.includes(q)) return false;
+        }
+        return true;
+      });
+    }
+
+    function syncSearchState() {
+      const wrap = document.querySelector('.search-wrap');
+      if (!wrap) return;
+      const inactive = !state.loaded || DATA.length === 0;
+      wrap.classList.toggle('disabled', inactive);
+      const inp = document.getElementById('searchInput');
+      if (inp) inp.disabled = inactive;
+    }
+
+    function renderTabs() {
+      const nav = document.getElementById('catTabs');
+      const cats = CONFIG._cats || [];
+      const catField = CONFIG._categoryField;
+      if (!catField || cats.length <= 1) { nav.innerHTML = ''; return; }
+
+      nav.innerHTML = cats.map(cat => {
+        const n = cat === 'All' ? DATA.length : DATA.filter(d => String(d[catField] ?? '').trim() === cat).length;
+        const col = cat === 'All' ? 'var(--accent)' : catColor(cat);
+        return `<button class="cat-tab${cat === state.cat ? ' active' : ''}" style="--tc:${col}" data-cat="${esc(cat)}">
+      <span class="cat-dot"></span>${esc(cat)}<span class="cat-badge">${n}</span>
+    </button>`;
+      }).join('');
+
+      nav.querySelectorAll('.cat-tab').forEach(btn => {
+        btn.onclick = () => { state.cat = btn.dataset.cat; state.page = 1; render(); };
+      });
+    }
+
+    function renderCards(items, offset) {
+      const list = document.getElementById('findingsList');
+      if (!items.length) {
+        list.innerHTML = `<div class="state-box"><div class="state-icon">\u2298</div><h3>No results</h3><p>Try adjusting your search or date filters.</p></div>`;
+        return;
+      }
+
+      const titleField = CONFIG._titleField;
+      const categoryField = CONFIG._categoryField;
+      const q = state.query;
+
+      list.innerHTML = items.map((item, i) => {
+        const catVal = categoryField ? String(item[categoryField] ?? '').trim() : '';
+        const col = catVal ? catColor(catVal) : 'var(--muted)';
+        const num = String(offset + i + 1).padStart(3, '0');
+
+        const titleHtml = titleField && item[titleField] != null
+          ? `<div class="field-title">${hi(fmtVal(item[titleField]), q)}</div>`
+          : '';
+
+        const metaParts = [];
+        if (categoryField && catVal) metaParts.push(`<span class="cat-tag" style="--cc:${col}">${esc(catVal)}</span>`);
+        if (TSCOL && item[TSCOL] != null) metaParts.push(`<span class="ts-val">${fmtTS(item[TSCOL])}</span>`);
+        const metaHtml = metaParts.length
+          ? `<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;flex-wrap:wrap">${metaParts.join('')}</div>`
+          : '';
+
+        const fieldRows = COLS.map(key => {
+          const val = item[key];
+          if (val == null || val === '') return '';
+
+          const isPrice = CONFIG.PRICE_FIELDS.includes(key);
+          const isBullet = CONFIG.BULLET_FIELDS.includes(key);
+          const isSentiment = CONFIG.SENTIMENT_FIELDS && CONFIG.SENTIMENT_FIELDS.includes(key);
+          let valueHtml;
+
+          if (isSentiment) {
+            valueHtml = renderSentimentVal(fmtVal(val), q);
+          } else if (isBullet) {
+            const points = toBullets(fmtVal(val));
+            valueHtml = `<ul class="bullet-list">${points.map(p => `<li>${hi(p, q)}</li>`).join('')}</ul>`;
+          } else {
+            const cls = isPrice ? 'field-val hl-price' : 'field-val';
+            valueHtml = `<span class="${cls}">${hi(fmtVal(val), q)}</span>`;
+          }
+
+          return `<div class="field-row">
+        <span class="field-label">${esc(colLabel(key))}</span>
+        ${valueHtml}
+      </div>`;
+        }).filter(Boolean).join('');
+
+        return `<div class="card" style="--cc:${col}; animation-delay:${i * 25}ms">
+      <div class="card-num">#${num}</div>
+      <div>
+        ${metaHtml}
+        ${titleHtml}
+        ${fieldRows ? `<div class="field-rows">${fieldRows}</div>` : ''}
+      </div>
+    </div>`;
+      }).join('');
+    }
+
+    function renderPagination(total) {
+      const pp = state.perPage;
+      const totalPages = Math.max(1, Math.ceil(total / pp));
+      const cur = Math.min(state.page, totalPages);
+      const start = (cur - 1) * pp + 1;
+      const end = Math.min(cur * pp, total);
+
+      document.getElementById('pageInfo').innerHTML = total
+        ? `Showing <strong>${start}\u2013${end}</strong> of <strong>${total}</strong>`
+        : 'No results';
+
+      const ctrl = document.getElementById('pageControls');
+      if (totalPages <= 1) { ctrl.innerHTML = ''; return; }
+
+      let pages = [];
+      if (totalPages <= 7) { for (let i = 1; i <= totalPages; i++) pages.push(i); }
+      else {
+        pages = [1];
+        if (cur > 3) pages.push('\u2026');
+        for (let i = Math.max(2, cur - 1); i <= Math.min(totalPages - 1, cur + 1); i++) pages.push(i);
+        if (cur < totalPages - 2) pages.push('\u2026');
+        pages.push(totalPages);
+      }
+
+      ctrl.innerHTML = `
+    <button class="pg-btn arr" id="pgPrev" ${cur <= 1 ? 'disabled' : ''}>\u2039</button>
+    ${pages.map(p => p === '\u2026'
+        ? `<span class="pg-ellipsis">\u2026</span>`
+        : `<button class="pg-btn${p === cur ? ' active' : ''}" data-p="${p}">${p}</button>`
+      ).join('')}
+    <button class="pg-btn arr" id="pgNext" ${cur >= totalPages ? 'disabled' : ''}>\u203A</button>
+  `;
+
+      ctrl.querySelector('#pgPrev').onclick = () => { if (state.page > 1) { state.page--; render(); } };
+      ctrl.querySelector('#pgNext').onclick = () => { if (state.page < totalPages) { state.page++; render(); } };
+      ctrl.querySelectorAll('[data-p]').forEach(b => {
+        b.onclick = () => { state.page = +b.dataset.p; render(); };
+      });
+    }
+
+    function renderMeta(all) {
+      document.getElementById('resultMeta').style.display = '';
+      document.getElementById('rmLeft').innerHTML = all.length !== DATA.length
+        ? `<strong>${all.length}</strong> of ${DATA.length} entries`
+        : `<strong>${DATA.length}</strong> entries`;
+      const arrow = CONFIG.SORT_DIR === 'desc' ? '\u2193' : '\u2191';
+      const label = CONFIG.SORT_FIELD === 'timestamp' ? 'Published Date/Time' : esc(CONFIG.SORT_FIELD || '\u2014');
+      document.getElementById('rmRight').innerHTML =
+        `Sorted by <span class="sort-toggle" id="sortToggle"><span>${label}</span><span class="sort-arrow">${arrow}</span></span>`;
+      const tog = document.getElementById('sortToggle');
+      if (tog) tog.onclick = () => {
+        CONFIG.SORT_DIR = CONFIG.SORT_DIR === 'asc' ? 'desc' : 'asc';
+        DATA.sort((a, b) => {
+          const ta = parseTS(a[TSCOL]) || new Date(0);
+          const tb = parseTS(b[TSCOL]) || new Date(0);
+          return CONFIG.SORT_DIR === 'desc' ? tb - ta : ta - tb;
+        });
+        state.page = 1;
+        render();
+      };
+    }
+
+    // -- STATE SCREENS --
+    function renderLoading() {
+      document.getElementById('catTabs').innerHTML = '';
+      document.getElementById('resultMeta').style.display = 'none';
+      document.getElementById('pageInfo').innerHTML = 'Loading\u2026';
+      document.getElementById('pageControls').innerHTML = '';
+      document.getElementById('findingsList').innerHTML = `
+    <div class="state-box">
+      <div class="state-icon" style="display:inline-block;animation:spin 1s linear infinite">\u21BB</div>
+      <h3>Loading data\u2026</h3><p>Fetching from Arboryx Admin API</p>
+    </div>`;
+    }
+
+    function renderError(msg) {
+      document.getElementById('catTabs').innerHTML = '';
+      document.getElementById('resultMeta').style.display = 'none';
+      document.getElementById('pageInfo').innerHTML = '\u2014';
+      document.getElementById('pageControls').innerHTML = '';
+      document.getElementById('findingsList').innerHTML = `
+    <div class="error-box">
+      <div class="err-icon">\u26A0</div>
+      <h3>Failed to load data</h3>
+      <p>${esc(msg)}</p>
+    </div>`;
+    }
+
+    // -- MAIN RENDER --
+    function render() {
+      if (!state.loaded) { renderLoading(); return; }
+
+      const all = filtered();
+      const totalPages = Math.max(1, Math.ceil(all.length / state.perPage));
+      state.page = Math.min(state.page, totalPages);
+      const offset = (state.page - 1) * state.perPage;
+      const page = all.slice(offset, offset + state.perPage);
+
+      syncSearchState();
+      renderTabs();
+      renderCards(page, offset);
+      renderPagination(all.length);
+      renderMeta(all);
+      syncPresets();
+      document.getElementById('scrollArea').scrollTop = 0;
+    }
+
+    // -- DATE PRESETS --
+    const t0 = () => { const d = new Date(); d.setHours(0, 0, 0, 0); return d; };
+    const PRESETS = {
+      all: () => ({ from: null, to: null }),
+      today: () => { const d = t0(); return { from: d, to: d }; },
+      yesterday: () => { const d = new Date(t0() - 864e5); return { from: d, to: d }; },
+      '7d': () => { const d = t0(); return { from: new Date(d - 6 * 864e5), to: d }; },
+      '30d': () => { const d = t0(); return { from: new Date(d - 29 * 864e5), to: d }; },
+    };
+
+    function applyPreset(key) {
+      state.preset = key;
+      const p = PRESETS[key]();
+      state.from = p.from; state.to = p.to; state.page = 1;
+      document.getElementById('dateFrom').value = p.from ? toISO(p.from) : '';
+      document.getElementById('dateTo').value = p.to ? toISO(p.to) : '';
+      render();
+    }
+
+    function syncPresets() {
+      document.querySelectorAll('.preset-btn').forEach(b => {
+        b.classList.toggle('active', b.dataset.preset === state.preset);
+      });
+    }
+
+    function spinRefresh(on) {
+      document.getElementById('refreshBtn').classList.toggle('spinning', on);
+    }
+
+    function setRefreshEnabled(on) {
+      document.getElementById('refreshBtn').disabled = !on;
+    }
+
+    // -- EVENT WIRING --
+
+    // Refresh — fetch delta from API
+    document.getElementById('refreshBtn').addEventListener('click', () => {
+      refreshDelta();
+    });
+
+    // Search
+    const si = document.getElementById('searchInput');
+    si.addEventListener('input', () => {
+      state.query = si.value.trim(); state.page = 1;
+      document.getElementById('clearSearch').classList.toggle('vis', state.query.length > 0);
+      render();
+    });
+    document.getElementById('clearSearch').addEventListener('click', () => {
+      si.value = ''; state.query = ''; state.page = 1;
+      document.getElementById('clearSearch').classList.remove('vis');
+      render();
+    });
+
+    // Date presets
+    document.getElementById('presets').addEventListener('click', e => {
+      const b = e.target.closest('.preset-btn');
+      if (b) applyPreset(b.dataset.preset);
+    });
+
+    // Custom date range
+    document.getElementById('dateFrom').addEventListener('change', e => {
+      state.from = e.target.value ? new Date(e.target.value + 'T00:00:00') : null;
+      state.preset = 'custom'; state.page = 1; render();
+    });
+    document.getElementById('dateTo').addEventListener('change', e => {
+      state.to = e.target.value ? new Date(e.target.value + 'T00:00:00') : null;
+      state.preset = 'custom'; state.page = 1; render();
+    });
+    document.getElementById('clearDates').addEventListener('click', () => applyPreset('all'));
+
+    // Per page
+    document.getElementById('perPageSelect').addEventListener('change', e => {
+      state.perPage = +e.target.value; state.page = 1; render();
+    });
+
+    // -- INIT --
+    syncSearchState();
+    const cached = loadFromSession();
+    if (cached && cached.entries && cached.entries.length > 0) {
+      processData(cached.entries);
+      updateFeed('cached', cached.entries.length);
+    } else {
+      renderLoading();
+      initialLoad();
+    }
+  </script>
+</body>
+
+</html>

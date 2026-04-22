@@ -1,4 +1,4 @@
-"""Cloud Function (2nd gen, HTTP) — API backend for AlphaSnap UI.
+"""Cloud Function (2nd gen, HTTP) — API backend for Arboryx Admin.
 
 Reads market findings from GCS and serves them as JSON.
 Includes API key authentication, in-memory caching, pagination,
@@ -13,17 +13,19 @@ Authentication:
     API_KEYS can hold a comma-separated list of valid keys.
 
 Endpoints (via ?action= query param):
-    GET ?action=findings                  -> all findings (optionally filtered)
-    GET ?action=findings&category=X       -> findings for one sector
-    GET ?action=findings&days=N           -> findings from the last N days
-    GET ?action=findings&date=YYYY-MM-DD  -> findings from an exact date
-    GET ?action=findings&sort=asc|desc    -> sort order (default: desc)
-    GET ?action=findings&limit=N&offset=M -> pagination
-    GET ?action=categories                -> list of available categories
-    GET ?action=stats                     -> total findings, category breakdown, date range
-    GET ?action=health                    -> health check (no auth required)
-    GET ?action=cache_status              -> cache hit count, last refresh, TTL, entry count
-    GET ?action=refresh                   -> force cache invalidation and reload
+    GET  ?action=findings                  -> all findings (optionally filtered)
+    GET  ?action=findings&category=X       -> findings for one sector
+    GET  ?action=findings&days=N           -> findings from the last N days
+    GET  ?action=findings&date=YYYY-MM-DD  -> findings from an exact date
+    GET  ?action=findings&sort=asc|desc    -> sort order (default: desc)
+    GET  ?action=findings&limit=N&offset=M -> pagination
+    GET  ?action=categories                -> list of available categories
+    GET  ?action=stats                     -> total findings, category breakdown, date range
+    GET  ?action=health                    -> health check (no auth required)
+    GET  ?action=cache_status              -> cache hit count, last refresh, TTL, entry count
+    GET  ?action=refresh                   -> force cache invalidation and reload
+    POST ?action=update                    -> update an entry by entry_id (JSON body)
+    POST ?action=delete                    -> delete an entry by entry_id (JSON body)
 
 Query parameter validation:
     days, limit, offset  -> must be positive integers
@@ -133,6 +135,92 @@ def _load_findings(force_refresh=False):
     return data, False
 
 
+def _download_with_generation():
+    """Fetch the current findings blob along with its GCS generation number.
+
+    Used by write paths to implement optimistic concurrency control via
+    if_generation_match. Returns (list, generation) where generation is 0
+    when the blob does not yet exist (for create-if-absent semantics).
+    """
+    client = _get_client()
+    bucket = client.bucket(BUCKET_NAME)
+    blob = bucket.blob(DATA_BLOB)
+    if not blob.exists():
+        return [], 0
+    blob.reload()
+    text = blob.download_as_text()
+    return json.loads(text), blob.generation
+
+
+def _upload_with_precondition(data, expected_generation):
+    """Upload findings back to GCS with an if_generation_match precondition.
+
+    Raises google.api_core.exceptions.PreconditionFailed if another writer
+    updated the object since we read it.
+    """
+    client = _get_client()
+    bucket = client.bucket(BUCKET_NAME)
+    blob = bucket.blob(DATA_BLOB)
+    payload = json.dumps(data, ensure_ascii=False, indent=2)
+    blob.upload_from_string(
+        payload,
+        content_type="application/json",
+        if_generation_match=expected_generation,
+    )
+
+
+def _invalidate_cache_with(data):
+    """Replace the in-memory cache with freshly-written data."""
+    _cache["data"] = data
+    _cache["loaded_at"] = time.time()
+
+
+def _find_index_by_entry_id(findings, entry_id):
+    """Return index of the first entry whose entry_id matches, else -1."""
+    for i, e in enumerate(findings):
+        if e.get("entry_id") == entry_id:
+            return i
+    return -1
+
+
+# Fields the admin UI may modify. category is intentionally excluded.
+_EDITABLE_FIELDS = (
+    "entry_id",
+    "timestamp",
+    "finding",
+    "sentiment_takeaways",
+    "guidance_play",
+    "price_levels",
+    "source_url",
+)
+
+
+def _apply_update(findings, original_entry_id, patch):
+    """Apply an update patch to the entry with the given original_entry_id.
+
+    Returns (updated_findings, updated_entry) or raises ValueError for
+    lookup/collision errors (caller maps these to 4xx responses).
+    """
+    idx = _find_index_by_entry_id(findings, original_entry_id)
+    if idx < 0:
+        raise ValueError(f"entry_id '{original_entry_id}' not found")
+
+    new_entry_id = patch.get("entry_id", original_entry_id)
+    if new_entry_id != original_entry_id:
+        # Renaming — reject if the new id already exists on a different row.
+        collision = _find_index_by_entry_id(findings, new_entry_id)
+        if collision >= 0 and collision != idx:
+            raise ValueError(f"entry_id '{new_entry_id}' already exists")
+
+    entry = dict(findings[idx])
+    for field in _EDITABLE_FIELDS:
+        if field in patch:
+            entry[field] = patch[field]
+    findings = list(findings)
+    findings[idx] = entry
+    return findings, entry
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -141,7 +229,7 @@ def _cors_response(data, status=200):
     """Wrap response with CORS headers."""
     headers = {
         "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Methods": "GET, OPTIONS",
+        "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
         "Access-Control-Allow-Headers": "Content-Type, Authorization, X-API-Key",
         "Content-Type": "application/json",
     }
@@ -232,6 +320,86 @@ def _parse_date(value):
 
 
 # ---------------------------------------------------------------------------
+# Write handler (update / delete)
+# ---------------------------------------------------------------------------
+
+_WRITE_MAX_RETRIES = 1  # one retry on generation-precondition failure
+
+
+def _handle_write(action, request, request_start):
+    """Apply an update or delete to the findings blob in GCS.
+
+    Uses optimistic concurrency: we read the current generation, apply the
+    change in memory, and write back with if_generation_match. If the blob
+    was modified concurrently we retry once; after that we surface 409 so
+    the UI can prompt the user to refresh.
+    """
+    try:
+        body = request.get_json(silent=True) or {}
+    except Exception:
+        return _error_response("Invalid JSON body", 400)
+
+    if action == "update":
+        original_entry_id = body.get("original_entry_id") or body.get("entry_id")
+        patch = body.get("patch") or {k: body[k] for k in _EDITABLE_FIELDS if k in body}
+        if not original_entry_id:
+            return _error_response("Missing 'original_entry_id' (or 'entry_id')", 400)
+        if not patch:
+            return _error_response("No editable fields supplied", 400)
+    else:  # delete
+        original_entry_id = body.get("entry_id")
+        if not original_entry_id:
+            return _error_response("Missing 'entry_id'", 400)
+        patch = None
+
+    # Load + mutate + write with optimistic retry
+    from google.api_core.exceptions import PreconditionFailed  # local import — cold start
+
+    last_error = None
+    for attempt in range(_WRITE_MAX_RETRIES + 1):
+        findings, generation = _download_with_generation()
+        try:
+            if action == "update":
+                new_findings, updated_entry = _apply_update(findings, original_entry_id, patch)
+                result_payload = {"status": "updated", "entry": updated_entry}
+            else:
+                idx = _find_index_by_entry_id(findings, original_entry_id)
+                if idx < 0:
+                    return _error_response(f"entry_id '{original_entry_id}' not found", 404)
+                new_findings = findings[:idx] + findings[idx + 1:]
+                result_payload = {"status": "deleted", "entry_id": original_entry_id}
+        except ValueError as ve:
+            # Lookup miss or entry_id collision — deterministic 4xx, no retry
+            msg = str(ve)
+            status = 409 if "already exists" in msg else 404
+            return _error_response(msg, status)
+
+        try:
+            _upload_with_precondition(new_findings, generation)
+            _invalidate_cache_with(new_findings)
+            result_payload["total"] = len(new_findings)
+            elapsed = time.time() - request_start
+            logging.info(
+                f"action={action} entry_id={original_entry_id} "
+                f"total={len(new_findings)} attempts={attempt + 1} time={elapsed:.4f}s"
+            )
+            return _cors_response(result_payload)
+        except PreconditionFailed as pe:
+            last_error = pe
+            continue  # someone else wrote — reload and retry
+
+    elapsed = time.time() - request_start
+    logging.warning(
+        f"action={action} entry_id={original_entry_id} "
+        f"conflict_after_retries time={elapsed:.4f}s err={last_error}"
+    )
+    return _error_response(
+        "Conflict: the findings file changed while we were writing. Please refresh and try again.",
+        409,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Entrypoint
 # ---------------------------------------------------------------------------
 
@@ -263,6 +431,12 @@ def api_handler(request):
         return auth_error
 
     try:
+        # ---- update / delete (write paths) ----
+        if action in ("update", "delete"):
+            if request.method != "POST":
+                return _error_response(f"action={action} requires POST", 405)
+            return _handle_write(action, request, request_start)
+
         # ---- cache_status ----
         if action == "cache_status":
             elapsed = time.time() - request_start

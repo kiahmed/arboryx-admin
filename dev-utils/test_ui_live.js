@@ -8,15 +8,15 @@ const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
 
-const HTML_PATH = path.resolve(__dirname, '..', 'market_findings_3.0.html');
+const HTML_PATH = path.resolve(__dirname, '..', 'arborist_3.2.html');
 const html = fs.readFileSync(HTML_PATH, 'utf8');
 let code = html.match(/<script>([\s\S]*?)<\/script>/)[1];
 code = code.replace(/\/\/ -- INIT --[\s\S]*$/, '');
 
 // Inject real API creds the deploy script would inject
 code = code
-  .replace("'__ALPHASNAP_API_URL__'", "'https://us-central1-marketresearch-agents.cloudfunctions.net/alphasnap-ui-api'")
-  .replace("'__ALPHASNAP_API_KEY__'", "'***REDACTED-ADMIN-KEY***'");
+  .replace("'__ARBORYX_ADMIN_API_URL__'", "'https://us-central1-marketresearch-agents.cloudfunctions.net/arboryx-admin-api'")
+  .replace("'__ARBORYX_ADMIN_API_KEY__'", "'***REDACTED-ADMIN-KEY***'");
 
 code += `
 globalThis.__api = {
@@ -40,7 +40,7 @@ function stub() {
     addEventListener(){}, querySelector(){return stub();}, querySelectorAll(){return [];},
     set onclick(_){}, get onclick(){return null;} };
 }
-const document = { getElementById: el, querySelector: () => stub(), querySelectorAll: () => [] };
+const document = { getElementById: el, querySelector: () => stub(), querySelectorAll: () => [], addEventListener(){}, removeEventListener(){} };
 const sessionStorage = { _d:{}, getItem(k){return this._d[k]??null;}, setItem(k,v){this._d[k]=v;}, removeItem(k){delete this._d[k];} };
 
 const sandbox = {
