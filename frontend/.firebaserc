@@ -1,0 +1,12 @@
+{
+  "projects": {
+    "default": "marketresearch-agents"
+  },
+  "targets": {
+    "marketresearch-agents": {
+      "hosting": {
+        "arboryx-ai": ["arboryx-ai"]
+      }
+    }
+  }
+}

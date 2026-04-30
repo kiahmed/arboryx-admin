@@ -1,0 +1,366 @@
+================================================================================
+ARBORYX PUBLIC LANDING — LOCKED PLAN (rev 2)
+Author: claude-code (Opus 4.7)
+Date:   2026-04-25
+Inputs: proposal/rfp.txt, proposal/response_1.txt + user decisions
+================================================================================
+
+This supersedes response_1.txt for the implementation plan. Decisions
+from response_1's §1 are now locked. Two new pieces of work surfaced
+from the answers and are folded into the phase plan:
+
+  - Read-only API key split (decision A)
+  - Background tooltip-generation routine (decision F) — admin-managed
+
+--------------------------------------------------------------------------------
+1. DECISIONS LOCKED
+--------------------------------------------------------------------------------
+
+  A. Public API access
+     → Add a separate READ-ONLY API key. The cloud function checks the
+       supplied key against a "read-only" allowlist for unsafe actions
+       (update/delete/refresh) and 403s. Read keys can hit
+       findings/stats/categories/entry/health.
+
+  B. Auth UI
+     → Defer ALL real auth wiring to a future phase. v1 ships a
+       "Sign in (coming soon)" placeholder in the header, no email
+       capture, no social buttons.
+
+  C. Mobile policy
+     → 2×3 grid on mobile, leaves stay small but the user can pinch-zoom.
+       On viewports ≤768px the center console is WIDER (eats more of
+       the header/footer's horizontal padding) to maximize tree real
+       estate. Strict no-scroll preserved on all viewports.
+
+  D. Leaf shape
+     → Ovate / oval geometric nodes. Not rectangles, not foliage —
+       a smooth ellipse with a centered dot, stroked edge, mechanical
+       feel intact.
+
+  E. Color split
+     → Trunk + branches use the existing sector palette
+       (cat0–cat9 from arborist_3.2.html). Leaves use the new
+       5-bucket recency gradient (today=teal → 7d=orange).
+
+  F. Tooltip text
+     → For v1, ship by truncating the first words of `finding`.
+     → IN PARALLEL, port the title-generation logic from
+       catalyst-knowledge-graph/src/export.py:56 (`_short_subtitle`)
+       — it pulls the first "Direct:" / "Market Dynamics:" /
+       "Indirect:" line out of `sentiment_takeaways` and trims to
+       ~120 chars. Wire this as a BACKGROUND ROUTINE that auto-
+       generates a `tooltip` field for every finding on add/update,
+       and exposes it in the admin UI for manual override.
+
+  G. Click-through behavior
+     → new_growth.html lands filtered to the clicked entry's
+       category AND the entry's date. The clicked entry is highlighted.
+       Other same-day same-category entries are visible as context.
+       After landing, any user click on a different category, "All",
+       another date, or a date range triggers a fresh on-demand fetch.
+
+  H. Timestamp normalization
+     → Pipeline assumption: arboryx.ai's `master_log_corrector.py`
+       (dev-utils/master_log_corrector.py:249, `normalize_timestamp`)
+       canonicalizes timestamps to YYYY-MM-DD. Phase 1 verifies this
+       holds for new pipeline outputs. If it does, no API-side
+       normalization needed. If not, we run master_log_corrector as a
+       pre-deploy hook on the master log OR replicate the logic in
+       the cloud function response.
+
+  I. Slogan
+     → "Turning Market Noise Into Your Edge"
+
+  J. Instagram share
+     → Button opens https://www.instagram.com (no web share URL exists).
+       Other platforms (X, WhatsApp, Facebook, LinkedIn, Reddit,
+       Telegram, Email) use their proper web share intents.
+
+  K. "Email signup" semantics
+     → It is the email/password sign-up option *inside* the sign-up
+       dialog (not a separate newsletter capture). Real implementation
+       requires backend credential storage — DEFERRED to the auth phase
+       per decision B. v1 dialog shows social buttons + "Sign up with
+       email" all greyed with "Coming soon".
+
+  v1 IMPROVEMENTS LOCKED (from §2 of response_1)
+     → Last-updated pulse, permalinkable views, keyboard nav.
+     → Time-range slider, ticker search, sparklines, watchlist deferred to v2.
+
+--------------------------------------------------------------------------------
+2. PHASE PLAN
+--------------------------------------------------------------------------------
+
+PHASE 1 — API READ PATH HARDENING + TOOLTIP FIELD
+  Repo: arboryx-admin
+  Files: cloud_function/main.py, deploy_cloud_func.sh,
+         arboryx_admin_backend.config.example, dev-utils/test_api.py
+
+  1.1  Add a READ_ONLY_API_KEYS env var (comma-separated). Distinguish
+       read vs write actions in the dispatcher. Read-only keys allowed
+       for: findings, stats, categories, entry, health, cache_status.
+       Read-only keys rejected with 403 for: update, delete, refresh.
+
+  1.2  Add `?action=entry&id=<entry_id>` endpoint. Returns a single
+       entry by entry_id. Used by new_growth.html for the deep-link
+       highlight (combined with sector + date filters per decision G).
+
+  1.3  Add `?action=findings&category=X&date=YYYY-MM-DD` support if
+       not already present (decision G needs both filters together).
+       Verify by inspection — likely already supported.
+
+  1.4  Add a `tooltip` field to the finding response payload. If the
+       master log doesn't have it yet (Phase 2 produces it), the API
+       falls back to the first ~30 chars of `finding` so v1 is never
+       blocked.
+
+  1.5  Verify `_normalize_timestamp` output in the master log is
+       YYYY-MM-DD as expected (decision H). If not, file a bug
+       against arboryx.ai and add a normalization pass in the
+       cloud function as a safety net.
+
+  1.6  Update test_api.py with cases for: read-only key gets 403
+       on update, write key still works, entry endpoint returns the
+       right entry, tooltip field present.
+
+  1.7  Deploy via `bash deploy_cloud_func.sh`, smoke-test live.
+
+
+PHASE 2 — TOOLTIP BACKFILL UTIL + ADMIN UI (here in arboryx-admin)
+  Repo: arboryx-admin only — fully self-contained, ships immediately.
+  Files: dev-utils/backfill_tooltips.py (new),
+         cloud_function/main.py (accept tooltip on update),
+         arborist_3.2.html (admin override field)
+
+  2.1  New util: dev-utils/backfill_tooltips.py
+         Step 1 — DRY-RUN scan
+           - Reads gs://marketresearch-agents/market_findings_log.json
+           - Lists every entry_id missing a `tooltip` field
+           - Prints a summary table: count, examples, by-category split
+         Step 2 — PROMPT
+           - "Generate tooltips for N entries? [y/N]"
+         Step 3 — GENERATE
+           - For each, run the ported `_short_subtitle` logic against
+             `sentiment_takeaways`:
+               · First "Direct:" / "Market Dynamics:" / "Indirect:"
+                 line, ":"-stripped
+               · Trim to ~30 chars (tighter than catalyst's 120)
+               · Fallback to first words of `finding` if no Direct/etc
+           - Show before/after preview, ask for final confirmation
+         Step 4 — WRITE
+           - Atomic write back to GCS (read-modify-write with the
+             same scaffold master_log_corrector uses)
+           - Print count of tooltips added
+       Idempotent — re-running only touches still-missing entries.
+
+  2.2  Cloud function: accept `tooltip` in the update endpoint's
+       writable-fields allowlist so admin edits persist it.
+
+  2.3  Extend the admin edit modal in arborist_3.2.html with a
+       `tooltip` field. Rules:
+         - Pre-filled with the current stored value.
+         - User can override; admin write endpoint persists the
+           override.
+         - A small "regenerate" button re-runs the auto-generator on
+           demand (client-side, against the entry's
+           sentiment_takeaways) — same trim rules as the backfill.
+       Schema: add `tooltip` to EDIT_FIELDS (line ~1409 in
+       arborist_3.2.html) and to the cloud function's writable
+       fields list.
+
+  2.4  Display the tooltip as a new field row on each card in
+       arborist_3.2.html (admin view only), so the operator can see
+       what the leaf tooltip will show without opening the edit modal.
+
+PHASE 2.5 — UPSTREAM PR TO arboryx.ai (permanent fix)
+  Repo: arboryx.ai — separate PR, sibling repo.
+  This is the architecturally correct fix: the pipeline that produces
+  the master log should emit `tooltip` on every new entry so we never
+  have to backfill again.
+
+  2.5.1  Create proposal/ folder at the root of arboryx.ai if it
+         doesn't exist.
+  2.5.2  Add proposal/tooltip_field.md describing:
+           - Motivation (drives the public grove leaf tooltip;
+             ~30-char display, key info from sentiment_takeaways)
+           - Source-of-truth function (port of _short_subtitle from
+             catalyst-knowledge-graph/src/export.py:56)
+           - Where to insert it in the pipeline (likely the writer
+             step in market_team.py — confirm during the PR)
+           - Data contract (tooltip: string, max ~30 chars, never
+             null — fallback to truncated finding)
+           - Tests to add
+  2.5.3  Open the PR with the proposal + the implementation.
+  2.5.4  Once merged + redeployed, the dev-util in 2.1 becomes
+         a "no missing tooltips found" no-op going forward.
+
+
+PHASE 3 — FRONTEND SCAFFOLD
+  Repo: arboryx-admin
+  Files: frontend/{index.html, new_growth.html, styles/, scripts/, assets/}
+
+  3.1  Create /frontend folder at repo root.
+
+  3.2  Extract design tokens from arborist_3.2.html into
+       frontend/styles/tokens.css:
+         - Colors (--bg, --surface, --border, --accent, --accent2/3,
+           --danger, --text, --muted, --dim — see audit)
+         - Category palette (--cat0..--cat9)
+         - NEW: --leaf-d0..--leaf-d6 (recency gradient, 5–7 buckets)
+         - Typography (Syne, JetBrains Mono — same Google Fonts import)
+         - Spacing rhythm, radii, shadows
+
+  3.3  Build the 3-row shell of index.html:
+         Header  — logo + "Arboryx" + slogan
+                   "Turning Market Noise Into Your Edge"
+                   right-aligned: "Sign in (coming soon)" placeholder
+         Main    — center console, full vw, fills viewport between
+                   header/footer. Mobile (≤768px): center console
+                   eats most of the horizontal padding for max area.
+         Footer  — share buttons (X, WhatsApp, FB, LinkedIn, Reddit,
+                   Telegram, Email, Instagram-via-instagram.com),
+                   follow buttons (X, LinkedIn), "Arboryx" watermark,
+                   bottom-right copyright/home button with dynamic year.
+
+  3.4  Responsive layout: strict no-scroll all viewports. Desktop 3×2
+       grid for grove, mobile 2×3 with reduced inter-tree padding.
+
+
+PHASE 4 — GROVE VISUALIZATION
+  Repo: arboryx-admin
+  Files: frontend/scripts/grove.js, frontend/styles/grove.css
+
+  Stack: SVG, vanilla JS, ZERO new dependencies.
+
+  4.1  Layout
+       - 6 sectors → 6 SVG viewports in a CSS grid (3×2 desktop, 2×3
+         mobile).
+       - Per-tree internal layout: deterministic radial-with-collision —
+         trunk at bottom, branches at fixed primary angles, leaves
+         placed via golden-ratio increments along branch tips. Stable
+         across reloads.
+       - Density = leaf count, automatic.
+
+  4.2  Visual tokens
+       - Trunk + branches: stroked lines using the sector's palette
+         color at 60% opacity for branches, 100% for trunk.
+       - Leaves: ovate/oval (rx ≠ ry, ~14×18px), stroked outline,
+         centered 2px dot, fill from --leaf-d0..d6 by recency bucket.
+       - Subtle grid background (matches admin dashboard texture).
+
+  4.3  Recency buckets (5-step v1, can extend to 7)
+         Today        → bright teal/green
+         Yesterday    → slightly darker green
+         2–3d old     → pale green
+         4–5d old     → yellow
+         6–7d old     → orange
+       Computed client-side from each entry's normalized timestamp.
+
+  4.4  Interactions
+       - Hover (pointer): CSS transform scale(1.15) + drop-shadow glow
+         + soft Web Audio chirp (gated on first user gesture, default-
+         muted on mobile and on prefers-reduced-motion, mute toggle
+         in legend).
+       - Focus (keyboard): same visual, NO chirp on focus to avoid
+         beep-spam during tab traversal.
+       - Click / Enter: tooltip with `tooltip` field text (~30 chars,
+         from Phase 2). After 600ms or on second click, navigate to
+         new_growth.html with deep-link params.
+
+  4.5  Legend (bottom-right of center console)
+       - Color → time mapping.
+       - "Last updated 4m ago" with subtle dot pulse on new entries.
+       - Mute toggle.
+       - First-visit keyboard hint ("Press 1–6 to jump · ←→ to walk").
+
+  4.6  Accessibility
+       - Each leaf is a real `<g role="button" tabindex="0"
+         aria-label="Robotics — <tooltip text> · Apr 25">`.
+       - Keyboard: [1]–[6] jump trees, arrows walk leaves, Enter opens.
+       - Focus rings visible.
+       - prefers-reduced-motion disables hover scale + chirp.
+
+
+PHASE 5 — new_growth.html (read-only mirror of arborist_3.2.html)
+  Repo: arboryx-admin
+  Files: frontend/new_growth.html
+
+  5.1  Clone arborist_3.2.html. Strip admin per the audit:
+         - .modal-overlay / .modal-box / .modal-* CSS (lines ~901–1007)
+         - .card-actions container + .card-act-btn (lines ~869–899)
+         - Edit/delete event listeners (lines ~1491–1498)
+         - apiWrite, handleSave, handleDelete (lines ~1389–1488)
+         - EDIT_FIELDS array (line ~1409)
+
+  5.2  Reuse header + footer chrome from index.html for visual
+       consistency.
+
+  5.3  Wire deep-link params (decision G):
+         ?sector=Robotics&entry=ROB-041926-001&date=2026-04-25
+       On load:
+         - Filter to that sector + date.
+         - Auto-scroll to the matching card and flash-highlight it.
+       After load, any user-driven category/date/range change refetches
+       on demand (existing behavior — no change needed).
+
+  5.4  Use the read-only API key for fetches.
+
+
+PHASE 6 — DEPLOY PIPELINE
+  Repo: arboryx-admin
+  Files: deploy_ui.sh, README.md, arboryx_admin_ui.config.example
+
+  6.1  Extend deploy_ui.sh to upload the entire /frontend tree to
+       gs://marketresearch-agents/ under per-file paths (preserving
+       structure). Per-object public-read ACL, matching existing
+       posture.
+
+  6.2  Inject `__ARBORYX_ADMIN_API_URL__` into all HTML files and the
+       READ-ONLY key into the public ones. The admin file
+       (arborist_3.2.html, root path) keeps the write key. Two
+       different placeholders so we don't mix them up:
+         __ARBORYX_PUBLIC_API_KEY__   — read-only, for /frontend
+         __ARBORYX_ADMIN_API_KEY__    — write, for arborist_3.2.html
+
+  6.3  Update README.md with:
+         - Public landing URL
+         - /frontend layout overview
+         - Deploy instructions
+         - The two-key model
+
+  6.4  Smoke-test with dev-utils/test_ui_render.js + test_ui_live.js
+       (extend to cover /frontend pages).
+
+
+PHASE 7 — POWER-USER POLISH (v2)
+  Time-range slider, ticker search chip, per-tree pulse sparklines,
+  watchlist pinning. Out of v1 scope.
+
+
+PHASE 8 — REAL AUTH (separate RFP recommended)
+  GCP-backed auth, social OAuth, email/password storage, session
+  management, account-bound watchlists. Currently deferred per
+  decision B + K.
+
+--------------------------------------------------------------------------------
+3. ESTIMATES (rough)
+--------------------------------------------------------------------------------
+  Phase 1:   ~1 session
+  Phase 2:   ~1 session (self-contained in arboryx-admin)
+  Phase 2.5: ~0.5 session (separate PR to arboryx.ai)
+  Phase 3:   ~1 session
+  Phase 4:   ~2 sessions (grove is the high-craft piece)
+  Phase 5:   ~0.5 session
+  Phase 6:   ~0.5 session
+  Phase 7:   deferred
+  Phase 8:   deferred (separate RFP)
+
+--------------------------------------------------------------------------------
+4. NEXT STEP
+--------------------------------------------------------------------------------
+Phase 1 is ready to start on confirmation.
+Phase 2 ships entirely inside arboryx-admin (dev-util backfill +
+admin override field). Phase 2.5 is a separate, follow-up PR to
+arboryx.ai that adds proposal/tooltip_field.md + the pipeline change
+so future findings get `tooltip` for free.

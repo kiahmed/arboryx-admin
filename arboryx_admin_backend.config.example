@@ -9,10 +9,42 @@ FUNCTION_NAME="your function name"
 FUNCTION_RUNTIME="python312"
 FUNCTION_TIMEOUT="60s"
 FUNCTION_MEMORY="256Mi"
+FUNCTION_MAX_INSTANCES="5"   # Track A Phase 1 — caps worst-case throughput; Cloud Functions returns 429 beyond.
 
 # === API SETTINGS ===
-API_KEY=""              # Generate with: python3 -c "import secrets; print(secrets.token_urlsafe(32))"
-CACHE_TTL_SECONDS="0"              # 0 = never expire (only refresh via ?action=refresh or cold start)
+# Track A Phase 1 — keys are now sourced from Secret Manager:
+#   secret 'arboryx-admin-key'  -> write-enabled
+#   secret 'arboryx-public-key' -> read-only
+# The values below are kept as ENV-VAR FALLBACK only (read by the function
+# in addition to Secret Manager). Leave empty in production once Secret
+# Manager is healthy. Useful for emergency rollback / local testing.
+API_KEY=""              # FALLBACK admin write key (Secret Manager 'arboryx-admin-key' is primary)
+READ_ONLY_API_KEYS=""   # FALLBACK CSV read-only keys (Secret Manager 'arboryx-public-key' is primary)
+CACHE_TTL_SECONDS="0"   # 0 = never expire (only refresh via ?action=refresh or cold start)
+
+# Track B Phase 2.1 — read backend.
+#   "gcs"        -> read findings from GCS (legacy default)
+#   "firestore"  -> read findings from Firestore /findings collection
+# Writes always go to GCS; Firestore is a read mirror refreshed via
+# dev-utils/sync_gcs_to_firestore.py. Flip + redeploy to switch.
+FINDINGS_BACKEND="gcs"
+
+# === CORS (Track A Phase 1) ===
+# Comma-separated origin allowlist. Empty = use the function's compiled-in default
+# (production GCS, Firebase Hosting, localhost:8000/3000). Add additional production
+# domains here if you serve the frontend from elsewhere.
+ALLOWED_ORIGINS=""
+
+# === SMTP (for the rotation-reminder Cloud Function) ===
+# Used by cloud_function_reminder/. The actual password is also mirrored
+# in Secret Manager as 'arboryx-smtp-pass'; sync after edits with:
+#     bash dev-utils/rotate_key.sh smtp
+SMTP_HOST="smtp.gmail.com"
+SMTP_PORT="587"
+SMTP_USER=""                       # e.g. info@yourdomain.com
+SMTP_PASSWORD=""                   # 16-char Gmail app password (strip spaces)
+SMTP_FROM=""                       # email From: address
+REMINDER_RECIPIENT=""              # email To: address
 
 # === SCHEDULER (optional, for cache refresh etc.) ===
 # SCHEDULER_NAME="your scheduler name"

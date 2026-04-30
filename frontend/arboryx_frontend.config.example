@@ -1,0 +1,66 @@
+# ============================================================================
+# Arboryx public frontend — runtime + deploy config
+# ============================================================================
+# Bash-sourceable. Consumed by frontend/deploy.sh which generates
+# scripts/config.js from these values.  Keep the .config file gitignored
+# (it carries the public read-only API key); commit only the .example.
+
+# ----------------------------------------------------------------------------
+# API
+# ----------------------------------------------------------------------------
+ARBORYX_API_URL=""                           # https://...cloudfunctions.net/arboryx-admin-api
+ARBORYX_PUBLIC_API_KEY=""                    # read-only key — never the admin write key
+
+# ----------------------------------------------------------------------------
+# Grove behavior — Phase 4 will read these to render leaves from real data.
+# ----------------------------------------------------------------------------
+MAX_LEAVES_PER_DAY=5                         # cap per recency-day per tree
+RECENCY_DAYS=7                               # how many days back the grove shows
+TREE_SCALE="1.0"                             # multiplier on overall tree (transform: scale)
+LEAF_SIZE="1.0"                              # multiplier on every leaf radius (rx/ry)
+
+# ----------------------------------------------------------------------------
+# Grove copy — title (sentence-case) and inline subtitle (mixed-case,
+# wrapped in parens by convention) shown above the SVG grove.  Empty
+# strings = use whatever's hardcoded in the HTML as fallback.
+# ----------------------------------------------------------------------------
+GROVE_TITLE="Hover the Grove. See what's growing across the thematic sectors."
+GROVE_SUBTITLE="(one leaf, one signal · denser trees mean busier sectors · hover to read, click to explore)"
+
+# ----------------------------------------------------------------------------
+# Sector toggles — set to false to hide a sector's tree on the landing.
+# Order is fixed (matches the SVG positions in index.html).
+# ----------------------------------------------------------------------------
+SECTOR_ROBOTICS_ENABLED=true
+SECTOR_CRYPTO_ENABLED=true
+SECTOR_AI_STACK_ENABLED=true
+SECTOR_SPACE_DEFENSE_ENABLED=true
+SECTOR_POWER_ENERGY_ENABLED=true
+SECTOR_STRATEGIC_MINERALS_ENABLED=true
+
+# ----------------------------------------------------------------------------
+# Share buttons — set to false to hide a button in the footer.
+# ----------------------------------------------------------------------------
+SHARE_X_ENABLED=true
+SHARE_WHATSAPP_ENABLED=true
+SHARE_FACEBOOK_ENABLED=true
+SHARE_LINKEDIN_ENABLED=true
+SHARE_REDDIT_ENABLED=true
+SHARE_TELEGRAM_ENABLED=true
+SHARE_EMAIL_ENABLED=true
+SHARE_INSTAGRAM_ENABLED=true
+
+# ----------------------------------------------------------------------------
+# Brand
+# ----------------------------------------------------------------------------
+BRAND_X_HANDLE="arboryx_ai"
+BRAND_LINKEDIN_URL="https://www.linkedin.com/company/arboryx"
+BRAND_SLOGAN="Turning Market Noise Into Your Edge"
+
+# ----------------------------------------------------------------------------
+# Deploy targets
+# ----------------------------------------------------------------------------
+GCS_BUCKET="marketresearch-agents"
+GCS_FRONTEND_PREFIX="arboryx.ai/"            # everything lands under this prefix
+FIREBASE_PROJECT="marketresearch-agents"
+FIREBASE_SITE="arboryx-ai"                   # hosting site name (not domain)

@@ -95,46 +95,63 @@ Results are saved to `dev-utils/run-logs/`.
 
 ```bash
 # Source-only update (auto-detects existing function)
-bash deploy_cloud_func.sh
+bash cloud_function/deploy.sh
 
 # Full redeploy (infra + IAM + source)
-bash deploy_cloud_func.sh --full
+bash cloud_function/deploy.sh --full
 
 # Preview without changes
-bash deploy_cloud_func.sh --dry-run
+bash cloud_function/deploy.sh --dry-run
 ```
 
 Reads all settings from `arboryx_admin_backend.config`.
 
-### UI Frontend
+### Admin UI
 
 ```bash
 # Deploy to GCS with API key/URL injection
-bash deploy_ui.sh
+bash deploy_arboryx-admin.sh
 
 # Preview without changes
-bash deploy_ui.sh --dry-run
+bash deploy_arboryx-admin.sh --dry-run
 ```
 
 The deploy script injects `API_URL` and `API_KEY` from `arboryx_admin_ui.config` into a temp copy of the HTML file, uploads it to GCS, and sets public read on that single object. The source file in git only contains placeholders.
+
+### Rotator + Reminder (Phase 1 hardening)
+
+```bash
+# Quarterly admin-key rotator
+bash cloud_function_rotator/make_rotator_pipeline_ready.sh    # one-time: SA + IAM
+bash cloud_function_rotator/deploy.sh                         # function + scheduler
+
+# Quarterly email reminder (run after the rotator)
+bash cloud_function_reminder/make_reminder_pipeline_ready.sh  # one-time: SA + IAM
+bash dev-utils/rotate_key.sh smtp                             # sync SMTP password into Secret Manager
+bash cloud_function_reminder/deploy.sh                        # function + scheduler
+```
 
 ## Project Structure
 
 ```
 arboryx-admin/
-  cloud_function/
-    main.py              # Cloud Function API handler
-    requirements.txt     # google-cloud-storage
+  cloud_function/                       # API backend (arboryx-admin-api)
+    main.py            requirements.txt
+    deploy.sh          update.sh
+  cloud_function_rotator/               # Quarterly admin-key rotator
+    main.py            requirements.txt
+    deploy.sh          make_rotator_pipeline_ready.sh   IAM_SETUP.md
+  cloud_function_reminder/              # Quarterly email reminder
+    main.py            requirements.txt
+    deploy.sh          make_reminder_pipeline_ready.sh  IAM_SETUP.md
   dev-utils/
-    test_api_local.py    # Local test (direct GCS)
-    test_api.py          # Remote test (HTTP against deployed API)
-    test_ui_render.js    # Headless UI render smoke test
-    test_ui_live.js      # Headless UI test against live API
-    make_dev_env_ready.sh
-    run-logs/            # Test result logs (gitignored)
-  arborist_*.html                     # Frontend SPA (placeholders, no secrets)
-  deploy_cloud_func.sh                # API deploy script
-  deploy_ui.sh                        # UI deploy script
-  arboryx_admin_backend.config.example  # API config template
-  arboryx_admin_ui.config.example       # UI config template
+    test_api_local.py    test_api.py    test_ui_render.js   test_ui_live.js
+    rotate_key.sh        backfill_tooltips.py              make_dev_env_ready.sh
+    run-logs/                            # Test result logs (gitignored)
+  frontend/                              # Public landing page (separate deploy)
+    deploy.sh    arboryx_frontend.config
+  arborist_*.html                        # Admin SPA (placeholders, no secrets)
+  deploy_arboryx-admin.sh                # Admin UI deploy (GCS + public ACL)
+  arboryx_admin_backend.config.example   # API + rotator + reminder config template
+  arboryx_admin_ui.config.example        # Admin UI config template
 ```

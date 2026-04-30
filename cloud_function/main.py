@@ -9,8 +9,10 @@ Authentication:
     a valid API key. Send via:
         X-API-Key: <key>
         Authorization: Bearer <key>
-    The expected key is set in the API_KEY env var.  For key rotation,
-    API_KEYS can hold a comma-separated list of valid keys.
+    Two key tiers:
+        API_KEY / API_KEYS         -> write-enabled (admin). Pass everywhere.
+        READ_ONLY_API_KEYS         -> public read-only. Rejected with 403
+                                      on update/delete/refresh.
 
 Endpoints (via ?action= query param):
     GET  ?action=findings                  -> all findings (optionally filtered)
@@ -19,13 +21,20 @@ Endpoints (via ?action= query param):
     GET  ?action=findings&date=YYYY-MM-DD  -> findings from an exact date
     GET  ?action=findings&sort=asc|desc    -> sort order (default: desc)
     GET  ?action=findings&limit=N&offset=M -> pagination
+    GET  ?action=entry&id=<entry_id>       -> single entry by entry_id
     GET  ?action=categories                -> list of available categories
     GET  ?action=stats                     -> total findings, category breakdown, date range
+    GET  ?action=stats&days=N              -> same shape, filtered to the last N days
     GET  ?action=health                    -> health check (no auth required)
     GET  ?action=cache_status              -> cache hit count, last refresh, TTL, entry count
-    GET  ?action=refresh                   -> force cache invalidation and reload
-    POST ?action=update                    -> update an entry by entry_id (JSON body)
-    POST ?action=delete                    -> delete an entry by entry_id (JSON body)
+    GET  ?action=refresh                   -> force cache invalidation and reload (write key only)
+    POST ?action=update                    -> update an entry by entry_id (JSON body, write key only)
+    POST ?action=delete                    -> delete an entry by entry_id (JSON body, write key only)
+
+Response shape:
+    Every finding entry served by /findings, /entry, and /update carries
+    a `tooltip` field — the short label shown on grove leaves. Falls back
+    to a 30-char truncation of `finding` if the stored tooltip is empty.
 
 Query parameter validation:
     days, limit, offset  -> must be positive integers
@@ -36,11 +45,31 @@ Query parameter validation:
 
 import os
 import re
+import gzip
 import json
 import time
 import logging
+import contextvars
 from datetime import datetime, timedelta, timezone
 from google.cloud import storage
+
+# Per-request resolved CORS origin (set once at the top of the entry-point;
+# read inside _cors_response without threading it through every call site).
+_request_origin: contextvars.ContextVar = contextvars.ContextVar("request_origin", default="")
+# Per-request gzip preference, mirrored from Accept-Encoding. Same plumbing
+# pattern as _request_origin so _cors_response stays signature-stable.
+_request_accepts_gzip: contextvars.ContextVar = contextvars.ContextVar("request_accepts_gzip", default=False)
+
+# Secret Manager is the source of truth for API keys (Track A Phase 1).
+# Import is wrapped so the function still cold-starts in environments
+# where the package isn't installed (e.g. unit tests); falls back to
+# env-var keys in that case.
+try:
+    from google.cloud import secretmanager
+    _SECRETMANAGER_AVAILABLE = True
+except ImportError:  # pragma: no cover
+    secretmanager = None
+    _SECRETMANAGER_AVAILABLE = False
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -50,24 +79,112 @@ BUCKET_NAME = os.environ.get("STORAGE_BUCKET", "marketresearch-agents")
 DATA_BLOB = os.environ.get("DATA_BLOB", "market_findings_log.json")
 CACHE_TTL_SECONDS = int(os.environ.get("CACHE_TTL_SECONDS", "300"))
 
-# Auth — single key or comma-separated list for rotation
+# Track B Phase 2.1 PR 2 — read backend selector.
+#   "gcs"        -> read from gs://<bucket>/<DATA_BLOB> (legacy default)
+#   "firestore"  -> read from the `findings` collection in Firestore
+# Writes (action=update/delete) ALWAYS go to GCS — Firestore stays a
+# read-optimized mirror that's refreshed via dev-utils/sync_gcs_to_firestore.py.
+# Flip-and-rollback: change this env var and redeploy; no data migration.
+FINDINGS_BACKEND = os.environ.get("FINDINGS_BACKEND", "gcs").strip().lower()
+FINDINGS_COLLECTION = os.environ.get("FINDINGS_COLLECTION", "findings")
+
+# Auth — write keys (admin) and read-only keys (public landing).
+#
+# Keys are now stored in Secret Manager as two secrets:
+#   arboryx-admin-key   -> write-enabled (admin). Pass everywhere.
+#   arboryx-public-key  -> read-only. Rejected with 403 on writes.
+# Each secret may carry MULTIPLE ENABLED versions during a rotation
+# soak window; all enabled versions are accepted simultaneously.
+#
+# Env-var keys (API_KEY / API_KEYS / READ_ONLY_API_KEYS) are still read
+# as a fallback so:
+#   1. local unit tests can run without GCP credentials
+#   2. emergency rollback can bypass Secret Manager via env override
+# Override env vars take precedence (union with secret-sourced keys).
+ADMIN_SECRET_NAME = os.environ.get("ADMIN_SECRET_NAME", "arboryx-admin-key")
+PUBLIC_SECRET_NAME = os.environ.get("PUBLIC_SECRET_NAME", "arboryx-public-key")
+
 _API_KEY = os.environ.get("API_KEY", "")
 _API_KEYS_RAW = os.environ.get("API_KEYS", "")
+_READ_ONLY_API_KEYS_RAW = os.environ.get("READ_ONLY_API_KEYS", "")
+_WRITE_KEYS: set = set()
+_READ_ONLY_KEYS: set = set()
 _VALID_KEYS: set = set()
+
+_secret_client = None
+
+
+def _get_secret_client():
+    """Singleton SecretManagerServiceClient; None if package unavailable."""
+    global _secret_client
+    if not _SECRETMANAGER_AVAILABLE:
+        return None
+    if _secret_client is None:
+        try:
+            _secret_client = secretmanager.SecretManagerServiceClient()
+        except Exception as exc:  # auth failure, etc. — log and degrade
+            logging.warning("Secret Manager client init failed: %s", exc)
+            return None
+    return _secret_client
+
+
+def _fetch_enabled_versions(secret_id: str) -> set:
+    """Return the set of payload values for every ENABLED version of `secret_id`.
+
+    Returns empty set on any error (auth, missing secret, no enabled versions);
+    the calling code must tolerate this and fall back to env-var keys.
+    """
+    client = _get_secret_client()
+    if client is None:
+        return set()
+    parent = f"projects/{PROJECT_ID}/secrets/{secret_id}"
+    keys: set = set()
+    try:
+        for ver in client.list_secret_versions(
+            request={"parent": parent, "filter": "state:ENABLED"}
+        ):
+            try:
+                payload = client.access_secret_version(request={"name": ver.name})
+                val = payload.payload.data.decode("utf-8").strip()
+                if val:
+                    keys.add(val)
+            except Exception as exc:
+                logging.warning("Failed to read %s: %s", ver.name, exc)
+    except Exception as exc:
+        logging.warning("Failed to list versions of %s: %s", secret_id, exc)
+    return keys
 
 
 def _build_valid_keys():
-    """Build the set of valid API keys from env vars (once)."""
-    global _VALID_KEYS
-    keys: set = set()
+    """Build write/read key sets from Secret Manager (primary) + env vars (fallback)."""
+    global _WRITE_KEYS, _READ_ONLY_KEYS, _VALID_KEYS
+
+    # Primary source: Secret Manager (all ENABLED versions of each secret).
+    write = _fetch_enabled_versions(ADMIN_SECRET_NAME)
+    readonly = _fetch_enabled_versions(PUBLIC_SECRET_NAME)
+
+    # Fallback / override: env vars (kept for local tests + emergency rollback).
     if _API_KEY:
-        keys.add(_API_KEY.strip())
+        write.add(_API_KEY.strip())
     if _API_KEYS_RAW:
         for k in _API_KEYS_RAW.split(","):
             k = k.strip()
             if k:
-                keys.add(k)
-    _VALID_KEYS = keys
+                write.add(k)
+    if _READ_ONLY_API_KEYS_RAW:
+        for k in _READ_ONLY_API_KEYS_RAW.split(","):
+            k = k.strip()
+            if k:
+                readonly.add(k)
+
+    _WRITE_KEYS = write
+    _READ_ONLY_KEYS = readonly
+    _VALID_KEYS = _WRITE_KEYS | _READ_ONLY_KEYS
+
+    logging.info(
+        "API keys loaded: %d write (admin), %d read-only (public)",
+        len(_WRITE_KEYS), len(_READ_ONLY_KEYS),
+    )
 
 
 _build_valid_keys()
@@ -86,6 +203,20 @@ def _get_client():
 
 
 # ---------------------------------------------------------------------------
+# Firestore client singleton (lazy — only paid for when FINDINGS_BACKEND=firestore)
+# ---------------------------------------------------------------------------
+_firestore_client = None
+
+
+def _get_firestore_client():
+    global _firestore_client
+    if _firestore_client is None:
+        from google.cloud import firestore  # local import — keeps GCS path import-light
+        _firestore_client = firestore.Client(project=PROJECT_ID)
+    return _firestore_client
+
+
+# ---------------------------------------------------------------------------
 # In-memory cache
 # ---------------------------------------------------------------------------
 _cache = {
@@ -94,6 +225,10 @@ _cache = {
     "ttl": CACHE_TTL_SECONDS,
     "hit_count": 0,
     "miss_count": 0,
+    # GCS object generation at time of cache fill — surfaced to clients so they
+    # can detect when the master log changed (insert, delete, dedup, reorder)
+    # and invalidate their own session caches without polling for diffs.
+    "generation": None,
 }
 
 
@@ -112,6 +247,17 @@ def _cache_is_valid():
 
 
 def _load_findings(force_refresh=False):
+    """Dispatcher: route to GCS or Firestore loader based on FINDINGS_BACKEND.
+
+    Both loaders return (list, cache_hit) and populate _cache identically,
+    so all downstream code (filtering, pagination, ETag) is backend-agnostic.
+    """
+    if FINDINGS_BACKEND == "firestore":
+        return _load_findings_firestore(force_refresh)
+    return _load_findings_gcs(force_refresh)
+
+
+def _load_findings_gcs(force_refresh=False):
     """Load findings from cache or GCS.
 
     Returns the list of finding dicts and a boolean indicating cache hit.
@@ -126,11 +272,63 @@ def _load_findings(force_refresh=False):
     blob = bucket.blob(DATA_BLOB)
     if not blob.exists():
         data = []
+        generation = None
     else:
+        blob.reload()  # populates metadata including generation
         data = json.loads(blob.download_as_text())
+        generation = blob.generation
 
     _cache["data"] = data
     _cache["loaded_at"] = time.time()
+    _cache["generation"] = generation
+    _cache["miss_count"] += 1
+    return data, False
+
+
+# Fields written by sync_gcs_to_firestore.py that aren't part of the wire schema.
+# Stripped on read so the cached entries are byte-identical to GCS-sourced ones.
+_FIRESTORE_INTERNAL_FIELDS = ("_hash", "_synced_at")
+
+
+def _load_findings_firestore(force_refresh=False):
+    """Load findings from cache or Firestore (`/findings` collection).
+
+    Generation is derived from max(_synced_at) milliseconds plus entry count,
+    so it changes on any sync that adds, updates, or deletes a doc — even a
+    delete-only sync (where max(_synced_at) is unchanged but count drops).
+    """
+    if not force_refresh and _cache_is_valid():
+        _cache["hit_count"] += 1
+        return _cache["data"], True
+
+    db = _get_firestore_client()
+    data = []
+    max_synced_ms = 0
+    for doc in db.collection(FINDINGS_COLLECTION).stream():
+        d = doc.to_dict() or {}
+        synced = d.get("_synced_at")
+        if synced is not None:
+            try:
+                ms = int(synced.timestamp() * 1000)
+                if ms > max_synced_ms:
+                    max_synced_ms = ms
+            except Exception:  # noqa: BLE001 — bad timestamps shouldn't break the load
+                pass
+        for f in _FIRESTORE_INTERNAL_FIELDS:
+            d.pop(f, None)
+        data.append(d)
+
+    if max_synced_ms:
+        # Multiplex (sync_ms, count) into a single monotonic int. The 1e5 shift
+        # gives count up to ~99,999 entries before collision — orders of
+        # magnitude beyond expected scale.
+        generation = max_synced_ms * 100_000 + len(data)
+    else:
+        generation = None
+
+    _cache["data"] = data
+    _cache["loaded_at"] = time.time()
+    _cache["generation"] = generation
     _cache["miss_count"] += 1
     return data, False
 
@@ -192,7 +390,30 @@ _EDITABLE_FIELDS = (
     "guidance_play",
     "price_levels",
     "source_url",
+    "tooltip",
 )
+
+
+def _with_tooltip(entry):
+    """Return entry dict with a `tooltip` field always present.
+
+    Prefers a stored tooltip; falls back to the first 30 chars of `finding`
+    with an ellipsis. Phase 2 backfills the field properly using the
+    sentiment_takeaways-derived logic ported from
+    catalyst-knowledge-graph/src/export.py:_short_subtitle.
+    """
+    if not entry:
+        return entry
+    if entry.get("tooltip"):
+        return entry
+    finding = (entry.get("finding") or "").strip()
+    if len(finding) > 30:
+        tooltip = finding[:30].rstrip() + "…"
+    else:
+        tooltip = finding
+    out = dict(entry)
+    out["tooltip"] = tooltip
+    return out
 
 
 def _apply_update(findings, original_entry_id, patch):
@@ -225,16 +446,117 @@ def _apply_update(findings, original_entry_id, patch):
 # Helpers
 # ---------------------------------------------------------------------------
 
+# CORS allowlist (Track A Phase 1 — replaces wildcard `*`).
+# Driven by the ALLOWED_ORIGINS env var (comma-separated).  Defaults
+# cover production GCS/Firebase hosting + local dev; extend via env var
+# in cloud_function/deploy.sh without code changes.
+_DEFAULT_ALLOWED_ORIGINS = (
+    "https://storage.googleapis.com,"
+    "https://arboryx-ai.web.app,"
+    "https://arboryx-ai.firebaseapp.com,"
+    "http://localhost:8000,"
+    "http://localhost:3000,"
+    "http://127.0.0.1:8000,"
+    "http://127.0.0.1:3000"
+)
+_ALLOWED_ORIGINS = {
+    o.strip() for o in os.environ.get("ALLOWED_ORIGINS", _DEFAULT_ALLOWED_ORIGINS).split(",") if o.strip()
+}
+
+
+def _resolve_origin(request_origin: str) -> str:
+    """Return the request's Origin if it's in the allowlist, else empty string.
+    An empty string in Access-Control-Allow-Origin signals 'no CORS allowed'
+    to a browser without throwing — the response still works for non-browser
+    clients (curl, server-to-server) that don't enforce CORS at all.
+    """
+    if not request_origin:
+        return ""
+    return request_origin if request_origin in _ALLOWED_ORIGINS else ""
+
+
 def _cors_response(data, status=200):
-    """Wrap response with CORS headers."""
+    """Wrap response with CORS headers.
+
+    Reads the per-request validated Origin from the _request_origin
+    ContextVar (set at the top of the entry-point). Empty origin means
+    the request had no Origin header OR the origin wasn't on the allowlist;
+    in that case Access-Control-Allow-Origin is omitted so browsers reject
+    the cross-site response, while non-browser clients (curl, server-to-
+    server) still get the body.
+    """
+    origin = _request_origin.get()
     headers = {
-        "Access-Control-Allow-Origin": "*",
         "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-        "Access-Control-Allow-Headers": "Content-Type, Authorization, X-API-Key",
+        "Access-Control-Allow-Headers": "Content-Type, Authorization, X-API-Key, If-None-Match",
+        "Access-Control-Expose-Headers": "ETag",
+        "Access-Control-Max-Age": "3600",
+        # Origin AND Accept-Encoding both vary the response — caches must
+        # key on both so a gzipped body never gets served to a client that
+        # didn't advertise gzip.
+        "Vary": "Origin, Accept-Encoding",
         "Content-Type": "application/json",
     }
+    if origin:
+        headers["Access-Control-Allow-Origin"] = origin
+    # Surface the cached GCS object generation on every JSON response so
+    # clients can detect master-log changes (insert/delete/dedup/reorder)
+    # without polling for diffs. Skip if data is a string (e.g. preflight).
+    gen = _cache.get("generation")
+    if isinstance(data, dict) and gen is not None and "data_generation" not in data:
+        data["data_generation"] = gen
+    # Strong-looking weak ETag — generation IS unique per data version, but
+    # the wire body varies per query (filters, pagination), so weak is honest.
+    if gen is not None:
+        headers["ETag"] = f'W/"{gen}"'
     body = json.dumps(data) if not isinstance(data, str) else data
+    # Track A Phase 2.3 — gzip when client opts in and the body is large
+    # enough to justify the ~20-byte gzip header. Skip empty bodies
+    # (preflight, errors with no string content) — gzipping nothing wastes CPU.
+    if (
+        body
+        and _request_accepts_gzip.get()
+        and isinstance(body, str)
+        and len(body) >= _GZIP_MIN_BYTES
+    ):
+        body = gzip.compress(body.encode("utf-8"))
+        headers["Content-Encoding"] = "gzip"
     return (body, status, headers)
+
+
+def _matches_if_none_match(inm: str, generation) -> bool:
+    """Return True if If-None-Match accepts the current generation as 'unchanged'.
+
+    Tolerates the three legal forms: '*', strong '"123"', weak 'W/"123"',
+    and comma-separated lists of those.
+    """
+    if not inm or generation is None:
+        return False
+    inm = inm.strip()
+    if inm == "*":
+        return True
+    weak = f'W/"{generation}"'
+    strong = f'"{generation}"'
+    for tag in (t.strip() for t in inm.split(",")):
+        if tag == weak or tag == strong:
+            return True
+    return False
+
+
+def _not_modified_response(generation):
+    """304 Not Modified — empty body, ETag + CORS headers preserved."""
+    origin = _request_origin.get()
+    headers = {
+        "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type, Authorization, X-API-Key, If-None-Match",
+        "Access-Control-Expose-Headers": "ETag",
+        "Access-Control-Max-Age": "3600",
+        "Vary": "Origin, Accept-Encoding",
+        "ETag": f'W/"{generation}"',
+    }
+    if origin:
+        headers["Access-Control-Allow-Origin"] = origin
+    return ("", 304, headers)
 
 
 def _error_response(message, status=400):
@@ -242,10 +564,66 @@ def _error_response(message, status=400):
     return _cors_response({"error": message}, status)
 
 
-def _authenticate(request):
+# ---------------------------------------------------------------------------
+# Per-IP rate limit (Track A Phase 1)
+# ---------------------------------------------------------------------------
+# In-memory token bucket — one bucket per (client_ip), keyed in a module-level
+# dict. Per-instance state, so a request landing on a different function
+# instance gets a fresh bucket; combined with --max-instances=5 this caps
+# worst-case throughput at ~5 * RATE_LIMIT_BURST per minute. Acceptable
+# leakage for a casual-abuse defense; upgrade to Redis/Firestore-backed
+# limiting only if real abuse appears.
+# 300/min sustained = 5 RPS — comfortably above human-driven page loads and
+# automated test sweeps; still hard-caps abuse (combined with --max-instances=5
+# the worst-case is ~1500 RPS total before Cloud Functions itself starts
+# returning 429s). Tunable via env var without redeploy.
+RATE_LIMIT_PER_MIN = int(os.environ.get("RATE_LIMIT_PER_MIN", "300"))
+RATE_LIMIT_BURST = int(os.environ.get("RATE_LIMIT_BURST", "100"))
+_rate_buckets: dict = {}  # ip -> {"tokens": float, "ts": float}
+
+
+def _client_ip(request) -> str:
+    """Extract the client IP, preferring X-Forwarded-For (Cloud Run/LB chain)."""
+    xff = request.headers.get("X-Forwarded-For", "")
+    if xff:
+        # XFF is a comma-list of upstream hops; the first is the original client.
+        return xff.split(",")[0].strip()
+    return request.remote_addr or "unknown"
+
+
+def _rate_limit_check(request):
+    """Token-bucket per IP. Returns None if allowed, or a 429 CORS response if not."""
+    ip = _client_ip(request)
+    now = time.time()
+    bucket = _rate_buckets.get(ip)
+    if bucket is None:
+        # New bucket: full burst.
+        _rate_buckets[ip] = {"tokens": float(RATE_LIMIT_BURST), "ts": now}
+        return None
+    # Refill: RATE_LIMIT_PER_MIN tokens/minute, capped at BURST.
+    elapsed = now - bucket["ts"]
+    refill = elapsed * (RATE_LIMIT_PER_MIN / 60.0)
+    bucket["tokens"] = min(float(RATE_LIMIT_BURST), bucket["tokens"] + refill)
+    bucket["ts"] = now
+    if bucket["tokens"] < 1.0:
+        # Throttled. Compute Retry-After hint (seconds until 1 token refills).
+        retry_after = max(1, int((1.0 - bucket["tokens"]) * 60.0 / RATE_LIMIT_PER_MIN))
+        logging.warning("rate_limit ip=%s tokens=%.2f", ip, bucket["tokens"])
+        body, status, headers = _error_response(
+            f"Rate limit exceeded ({RATE_LIMIT_PER_MIN}/min per IP). Retry in {retry_after}s.",
+            429,
+        )
+        headers["Retry-After"] = str(retry_after)
+        return (body, status, headers)
+    bucket["tokens"] -= 1.0
+    return None
+
+
+def _authenticate(request, requires_write=False):
     """Validate the API key from the request.
 
     Returns None if auth succeeds, or a CORS error tuple if it fails.
+    When requires_write=True, read-only keys are rejected with 403.
     """
     if not _VALID_KEYS:
         # No keys configured — auth is disabled (open access)
@@ -264,7 +642,15 @@ def _authenticate(request):
     if key not in _VALID_KEYS:
         return _error_response("Invalid API key.", 401)
 
+    if requires_write and key in _READ_ONLY_KEYS and key not in _WRITE_KEYS:
+        return _error_response("This action requires a write-enabled API key.", 403)
+
     return None
+
+
+# Actions that mutate state (or invalidate the read cache). Read-only
+# keys are rejected with 403 on these.
+_WRITE_ACTIONS = frozenset({"update", "delete", "refresh"})
 
 
 _MONTH_MAP = {
@@ -299,24 +685,105 @@ def _normalize_timestamp(ts: str) -> str:
     return ""
 
 
-def _parse_positive_int(value, param_name):
-    """Parse a string as a positive integer. Returns (int, None) or (None, error_string)."""
+# Hard upper bounds — defense against pathological clients (e.g. limit=999999999
+# blowing a list comprehension; days=10000 hitting timestamp arithmetic edge cases).
+_LIMIT_MAX = 1000
+_OFFSET_MAX = 1_000_000
+_DAYS_MAX = 3650  # 10 years — plenty for current data, fits in an int
+
+# Sector whitelist — must match frontend's CONFIG.sectors order/spelling.
+# Used to validate ?category= against a closed set instead of accepting
+# any string (which we'd then have to escape downstream).
+_VALID_SECTORS = {
+    "Robotics", "Crypto", "AI Stack",
+    "Space & Defense", "Power & Energy", "Strategic Minerals",
+}
+
+# Strict regexes for scalar inputs.  Compile once at module load.
+_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+_ENTRY_ID_RE = re.compile(r"^[A-Z]{2,4}-\d{6}-\d{3}$")  # e.g. ROB-041926-001, CRY-042126-001
+
+
+def _parse_positive_int(value, param_name, max_value=None):
+    """Parse a string as a positive integer with an upper bound.
+    Returns (int, None) or (None, error_string).
+    """
     try:
-        n = int(value)
+        n = int(str(value).strip())
     except (ValueError, TypeError):
         return None, f"'{param_name}' must be a positive integer, got '{value}'"
     if n <= 0:
         return None, f"'{param_name}' must be a positive integer, got {n}"
+    cap = max_value if max_value is not None else (
+        _LIMIT_MAX if param_name == "limit"
+        else _OFFSET_MAX if param_name == "offset"
+        else _DAYS_MAX if param_name == "days"
+        else None
+    )
+    if cap is not None and n > cap:
+        return None, f"'{param_name}' must be <= {cap}, got {n}"
     return n, None
 
 
 def _parse_date(value):
-    """Parse a YYYY-MM-DD string. Returns (date_str, None) or (None, error_string)."""
+    """Parse a YYYY-MM-DD string strictly. Returns (date_str, None) or (None, error_string)."""
+    if not isinstance(value, str) or not _DATE_RE.match(value):
+        return None, f"'date' must be in YYYY-MM-DD format, got '{value}'"
     try:
         datetime.strptime(value, "%Y-%m-%d")
-        return value, None
-    except (ValueError, TypeError):
-        return None, f"'date' must be in YYYY-MM-DD format, got '{value}'"
+    except ValueError:
+        return None, f"'date' is not a real calendar date: '{value}'"
+    return value, None
+
+
+def _parse_entry_id(value):
+    """Validate an entry_id against the canonical SEC-DDMMYY-NNN shape.
+    Returns (entry_id, None) or (None, error_string).
+    """
+    if not isinstance(value, str) or not _ENTRY_ID_RE.match(value):
+        return None, f"'entry_id' must match ^[A-Z]{{2,4}}-\\d{{6}}-\\d{{3}}$, got '{value}'"
+    return value, None
+
+
+def _parse_category(value):
+    """Validate ?category= against the closed sector whitelist.
+    Returns (category, None) or (None, error_string).
+    """
+    if value not in _VALID_SECTORS:
+        return None, f"'category' must be one of {sorted(_VALID_SECTORS)}, got '{value}'"
+    return value, None
+
+
+def _parse_sort(value):
+    """Validate ?sort= as 'asc' or 'desc'.  Returns (sort, None) or (None, error_string)."""
+    if value not in ("asc", "desc"):
+        return None, f"'sort' must be 'asc' or 'desc', got '{value}'"
+    return value, None
+
+
+# Track A Phase 1.5 — defense-in-depth length cap. Individual parsers already
+# enforce strict shapes (regex / whitelist), but a 200-char gate on every query
+# string value rejects pathological payloads before we touch them.
+_PARAM_MAX_LEN = 200
+
+# Track A Phase 2.3 — minimum body size worth gzipping. Below this, the
+# ~20-byte gzip header eats into any savings; CPU cost is also non-trivial
+# at high QPS for tiny payloads.
+_GZIP_MIN_BYTES = 512
+
+
+def _validate_arg_lengths(request):
+    """Return an error response if any query-arg value exceeds _PARAM_MAX_LEN, else None."""
+    for key, value in request.args.items():
+        if value is not None and len(value) > _PARAM_MAX_LEN:
+            preview = value[:60] + ("..." if len(value) > 60 else "")
+            logging.warning(
+                f"reject_oversize_arg key={key} len={len(value)} preview='{preview}'"
+            )
+            return _error_response(
+                f"query parameter '{key}' exceeds {_PARAM_MAX_LEN} chars", 400
+            )
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -361,7 +828,7 @@ def _handle_write(action, request, request_start):
         try:
             if action == "update":
                 new_findings, updated_entry = _apply_update(findings, original_entry_id, patch)
-                result_payload = {"status": "updated", "entry": updated_entry}
+                result_payload = {"status": "updated", "entry": _with_tooltip(updated_entry)}
             else:
                 idx = _find_index_by_entry_id(findings, original_entry_id)
                 if idx < 0:
@@ -407,11 +874,32 @@ def api_handler(request):
     """HTTP Cloud Function entrypoint."""
     request_start = time.time()
 
+    # Resolve + stash the CORS origin once for this request — _cors_response
+    # reads it from the ContextVar so we don't have to thread it everywhere.
+    _request_origin.set(_resolve_origin(request.headers.get("Origin", "")))
+    # Mirror the client's gzip preference for _cors_response. Be permissive
+    # on parsing — any 'gzip' token is a yes; 'identity' / empty / missing = no.
+    _request_accepts_gzip.set("gzip" in request.headers.get("Accept-Encoding", "").lower())
+
     # Handle CORS preflight — no auth required
     if request.method == "OPTIONS":
         return _cors_response("", 204)
 
+    # Track A Phase 1.5 — reject pathologically-long query args before any
+    # downstream parsing/auth work. Individual parsers still enforce shape;
+    # this is a cheap upstream gate against >200-char payloads.
+    size_error = _validate_arg_lengths(request)
+    if size_error is not None:
+        return size_error
+
+    # Track A Phase 1 — per-IP rate limit BEFORE auth so a flood of bad-key
+    # requests can't burn through the auth check on every hit. Bypassed for
+    # the unauthenticated health check so probes/uptime checks aren't capped.
     action = request.args.get("action", "findings")
+    if action != "health":
+        rl_error = _rate_limit_check(request)
+        if rl_error is not None:
+            return rl_error
 
     # Health check — no auth required
     if action == "health":
@@ -423,8 +911,9 @@ def api_handler(request):
             "cache_ttl": _cache["ttl"],
         })
 
-    # Authenticate all other endpoints
-    auth_error = _authenticate(request)
+    # Authenticate all other endpoints. Write actions require a key
+    # NOT in the read-only allowlist; everything else accepts either.
+    auth_error = _authenticate(request, requires_write=(action in _WRITE_ACTIONS))
     if auth_error is not None:
         elapsed = time.time() - request_start
         logging.warning(f"action={action} auth=FAILED time={elapsed:.4f}s")
@@ -436,6 +925,21 @@ def api_handler(request):
             if request.method != "POST":
                 return _error_response(f"action={action} requires POST", 405)
             return _handle_write(action, request, request_start)
+
+        # ---- ETag conditional GET (Track A Phase 2.4) ----
+        # Skip for `refresh` (caller explicitly wants a fresh read) and
+        # `cache_status` (admin debug — should always reflect live cache state).
+        # For everything else, the response is a function of the master-log
+        # generation; if the client already has that version, return 304.
+        if action not in ("refresh", "cache_status"):
+            inm = request.headers.get("If-None-Match", "")
+            if inm:
+                _load_findings()  # populate _cache["generation"]
+                gen = _cache.get("generation")
+                if _matches_if_none_match(inm, gen):
+                    elapsed = time.time() - request_start
+                    logging.info(f"action={action} etag=HIT 304 time={elapsed:.4f}s")
+                    return _not_modified_response(gen)
 
         # ---- cache_status ----
         if action == "cache_status":
@@ -479,11 +983,35 @@ def api_handler(request):
             logging.info(f"action=categories cache={cache_label} count={len(cats)} time={elapsed:.4f}s")
             return _cors_response({"categories": cats, "count": len(cats)})
 
+        # ---- entry by id ----
+        if action == "entry":
+            entry_id = request.args.get("id") or request.args.get("entry_id")
+            if not entry_id:
+                return _error_response("'id' query parameter required for action=entry")
+            idx = _find_index_by_entry_id(findings, entry_id)
+            if idx < 0:
+                return _error_response(f"entry_id '{entry_id}' not found", 404)
+            elapsed = time.time() - request_start
+            logging.info(f"action=entry cache={cache_label} entry_id={entry_id} time={elapsed:.4f}s")
+            return _cors_response({"entry": _with_tooltip(findings[idx])})
+
         # ---- stats ----
+        # Optional ?days=N filter scopes the response (total_findings,
+        # categories, date_range) to the last N days. Without days, returns
+        # all-time stats — preserves backward compat.
         if action == "stats":
+            days_raw = request.args.get("days")
+            scoped = findings
+            if days_raw is not None:
+                days, err = _parse_positive_int(days_raw, "days")
+                if err:
+                    return _error_response(err)
+                cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%d")
+                scoped = [e for e in findings if _normalize_timestamp(e.get("timestamp", "")) >= cutoff]
+
             category_counts: dict = {}
             normalized_dates = []
-            for e in findings:
+            for e in scoped:
                 cat = e.get("category", "Unknown")
                 category_counts[cat] = category_counts.get(cat, 0) + 1
                 nd = _normalize_timestamp(e.get("timestamp", ""))
@@ -492,15 +1020,21 @@ def api_handler(request):
 
             normalized_dates.sort()
             elapsed = time.time() - request_start
-            logging.info(f"action=stats cache={cache_label} total={len(findings)} time={elapsed:.4f}s")
-            return _cors_response({
-                "total_findings": len(findings),
+            logging.info(
+                f"action=stats cache={cache_label} days={days_raw} "
+                f"total={len(scoped)} time={elapsed:.4f}s"
+            )
+            response = {
+                "total_findings": len(scoped),
                 "categories": category_counts,
                 "date_range": {
                     "earliest": normalized_dates[0] if normalized_dates else None,
                     "latest": normalized_dates[-1] if normalized_dates else None,
                 },
-            })
+            }
+            if days_raw is not None:
+                response["days_window"] = int(days_raw)
+            return _cors_response(response)
 
         # ---- findings (default) ----
         category = request.args.get("category")
@@ -559,7 +1093,7 @@ def api_handler(request):
             if err:
                 return _error_response(err)
 
-        paginated = findings[offset: offset + limit]
+        paginated = [_with_tooltip(e) for e in findings[offset: offset + limit]]
         has_more = (offset + limit) < total
 
         elapsed = time.time() - request_start

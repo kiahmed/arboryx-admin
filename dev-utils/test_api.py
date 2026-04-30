@@ -197,6 +197,7 @@ def _run_one(
     expect_count_min: Optional[int] = None,
     expect_empty: bool = False,
     expect_key: Optional[str] = None,
+    expect_finding_field: Optional[str] = None,
 ) -> TestResult:
     """Run a single test and return a TestResult."""
     url, status, elapsed, resp = _make_request(
@@ -252,6 +253,17 @@ def _run_one(
         if body is None or (isinstance(body, dict) and expect_key not in body):
             passed = False
             detail = f"Expected key '{expect_key}' in response"
+
+    if passed and expect_finding_field is not None:
+        target = None
+        if isinstance(body, dict):
+            if isinstance(body.get("findings"), list) and body["findings"]:
+                target = body["findings"][0]
+            elif isinstance(body.get("entry"), dict):
+                target = body["entry"]
+        if target is None or expect_finding_field not in target:
+            passed = False
+            detail = f"Expected field '{expect_finding_field}' in findings[0]/entry"
 
     return TestResult(
         name=name,
@@ -311,6 +323,44 @@ def suite_auth(cfg: argparse.Namespace) -> list[TestResult]:
         expect_status=204,
     ))
 
+    # 5–8) Read-only key tier — passes reads, blocked from writes
+    if cfg.read_only_key:
+        results.append(_run_one(
+            "Auth: read-only key on findings -> 200",
+            cfg.url, {"action": "findings", "limit": "1"},
+            api_key=cfg.read_only_key, timeout=cfg.timeout,
+            expect_status=200,
+        ))
+        results.append(_run_one(
+            "Auth: read-only key on update -> 403",
+            cfg.url, {"action": "update"},
+            api_key=cfg.read_only_key, method="POST", timeout=cfg.timeout,
+            expect_status=403,
+        ))
+        results.append(_run_one(
+            "Auth: read-only key on delete -> 403",
+            cfg.url, {"action": "delete"},
+            api_key=cfg.read_only_key, method="POST", timeout=cfg.timeout,
+            expect_status=403,
+        ))
+        results.append(_run_one(
+            "Auth: read-only key on refresh -> 403",
+            cfg.url, {"action": "refresh"},
+            api_key=cfg.read_only_key, timeout=cfg.timeout,
+            expect_status=403,
+        ))
+    else:
+        for label in (
+            "Auth: read-only key on findings -> 200",
+            "Auth: read-only key on update -> 403",
+            "Auth: read-only key on delete -> 403",
+            "Auth: read-only key on refresh -> 403",
+        ):
+            results.append(TestResult(
+                name=label, status=Status.SKIP,
+                detail="No --read-only-key provided; skipping read-only-tier tests",
+            ))
+
     return results
 
 
@@ -342,6 +392,14 @@ def suite_basic(cfg: argparse.Namespace) -> list[TestResult]:
         expect_status=200,
     ))
 
+    # Stats with recency window — categories/total scoped to last N days
+    results.append(_run_one(
+        "Basic: stats with days=7 (recency-scoped)",
+        cfg.url, {"action": "stats", "days": "7"},
+        api_key=cfg.api_key, timeout=cfg.timeout,
+        expect_status=200, expect_key="days_window",
+    ))
+
     # Cache status
     results.append(_run_one(
         "Basic: cache_status endpoint",
@@ -358,7 +416,64 @@ def suite_basic(cfg: argparse.Namespace) -> list[TestResult]:
         expect_status=200,
     ))
 
+    # Findings response carries `tooltip` field on every entry
+    results.append(_run_one(
+        "Basic: findings include tooltip field",
+        cfg.url, {"action": "findings", "limit": "1"},
+        api_key=cfg.api_key, timeout=cfg.timeout,
+        expect_status=200, expect_finding_field="tooltip",
+    ))
+
+    # Entry-by-id endpoint — fetch one entry_id, then look it up
+    sample_entry_id = _fetch_sample_entry_id(cfg)
+    if sample_entry_id:
+        results.append(_run_one(
+            f"Basic: entry by id ({sample_entry_id}) -> 200",
+            cfg.url, {"action": "entry", "id": sample_entry_id},
+            api_key=cfg.api_key, timeout=cfg.timeout,
+            expect_status=200, expect_finding_field="tooltip",
+        ))
+    else:
+        results.append(TestResult(
+            name="Basic: entry by id -> 200",
+            status=Status.SKIP,
+            detail="Could not fetch a sample entry_id (no findings or auth failure)",
+        ))
+
+    # Entry endpoint without id -> 400
+    results.append(_run_one(
+        "Basic: entry without id -> 400",
+        cfg.url, {"action": "entry"},
+        api_key=cfg.api_key, timeout=cfg.timeout,
+        expect_status=400,
+    ))
+
+    # Entry endpoint with bogus id -> 404
+    results.append(_run_one(
+        "Basic: entry with unknown id -> 404",
+        cfg.url, {"action": "entry", "id": "DEFINITELY-NOT-AN-ENTRY-XYZ"},
+        api_key=cfg.api_key, timeout=cfg.timeout,
+        expect_status=404,
+    ))
+
     return results
+
+
+def _fetch_sample_entry_id(cfg: argparse.Namespace) -> Optional[str]:
+    """Fetch a single finding and return its entry_id (for entry-by-id tests)."""
+    url, status, _, resp = _make_request(
+        cfg.url, {"action": "findings", "limit": "1"},
+        api_key=cfg.api_key, timeout=cfg.timeout,
+    )
+    if status != 200 or resp is None:
+        return None
+    body = _safe_json(resp)
+    if not isinstance(body, dict):
+        return None
+    findings = body.get("findings")
+    if not isinstance(findings, list) or not findings:
+        return None
+    return findings[0].get("entry_id")
 
 
 def suite_filters(cfg: argparse.Namespace) -> list[TestResult]:
@@ -530,12 +645,19 @@ def suite_edge(cfg: argparse.Namespace) -> list[TestResult]:
         expect_status=400,
     ))
 
-    # Very large limit -> should still work
+    # Track A Phase 1: limit is now capped at 1000. limit at-cap should pass,
+    # limit above-cap should 400 with a clear "must be <= 1000" message.
     results.append(_run_one(
-        "Edge: very large limit (9999) -> 200",
-        cfg.url, {"action": "findings", "limit": "9999"},
+        "Edge: limit at cap (1000) -> 200",
+        cfg.url, {"action": "findings", "limit": "1000"},
         api_key=cfg.api_key, timeout=cfg.timeout,
         expect_status=200,
+    ))
+    results.append(_run_one(
+        "Edge: limit above cap (9999) -> 400",
+        cfg.url, {"action": "findings", "limit": "9999"},
+        api_key=cfg.api_key, timeout=cfg.timeout,
+        expect_status=400,
     ))
 
     return results
@@ -640,6 +762,11 @@ def _build_parser() -> argparse.ArgumentParser:
         "--api-key", "-k",
         default=os.environ.get("ARBORYX_ADMIN_API_KEY"),
         help="API key for authenticated requests (or set ARBORYX_ADMIN_API_KEY env var)",
+    )
+    p.add_argument(
+        "--read-only-key",
+        default=os.environ.get("ARBORYX_ADMIN_READ_ONLY_API_KEY"),
+        help="Read-only API key for tier tests (or set ARBORYX_ADMIN_READ_ONLY_API_KEY env var)",
     )
     p.add_argument(
         "--category", "-c",

@@ -1,0 +1,119 @@
+/* =========================================================================
+   Slate variant — lighter charcoal/gunmetal palette with cool blue undertone.
+   AI-lab / spatial-computing vibe vs the dark variant's terminal/ops feel.
+
+   Apply by linking AFTER tokens.css and BEFORE landing.css:
+       <link rel="stylesheet" href="styles/tokens.css">
+       <link rel="stylesheet" href="styles/variant-slate.css">
+       <link rel="stylesheet" href="styles/landing.css">
+   The :root overrides cascade through every consumer of the tokens.
+   ========================================================================= */
+
+:root {
+  /* Surface stack — slate / gunmetal with a hint of cool blue. */
+  --bg:        #1b2434;
+  --surface:   #25324a;
+  --surface2:  #2c3a55;
+
+  /* Borders — slightly more visible to compensate for higher base luminance. */
+  --border:    #354863;
+  --border2:   #4a5f80;
+  --dim:       #3a4a66;
+
+  /* Text — keep cool but raise contrast against the lighter base. */
+  --text:      #d6e0f0;
+  --muted:     #7a8aa6;
+
+  /* Accents — keep gold but lean a bit on blue for the "AI lab" feel. */
+  --accent:    #f0c060;
+  --accent2:   #5be0c0;
+  --accent3:   #7fb4ff;
+}
+
+/* Soft ambient gradient — the "spatial" depth cue. */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background:
+    radial-gradient(ellipse at 12% 18%, rgba(127, 180, 255, 0.07) 0%, transparent 55%),
+    radial-gradient(ellipse at 88% 88%, rgba(240, 192,  96, 0.05) 0%, transparent 55%),
+    radial-gradient(ellipse at 50% 55%, rgba(91, 224, 192, 0.025) 0%, transparent 60%);
+}
+
+/* Faint grid lattice — subtle "data fabric" texture. */
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background-image:
+    linear-gradient(to right, rgba(127, 180, 255, 0.025) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(127, 180, 255, 0.025) 1px, transparent 1px);
+  background-size: 48px 48px;
+  mask-image: radial-gradient(ellipse at center, black 30%, transparent 80%);
+  -webkit-mask-image: radial-gradient(ellipse at center, black 30%, transparent 80%);
+}
+
+/* Pull #site above the ambient layers. */
+#site { position: relative; z-index: 1; }
+
+/* Header / footer — slightly translucent so the gradient peeks through. */
+.site-header,
+.site-footer {
+  background: rgba(27, 36, 52, 0.82);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+/* Cells / surfaces in this variant get a soft inner glow rather than a hard border. */
+.legend {
+  background: rgba(37, 50, 74, 0.72);
+  border-color: rgba(127, 180, 255, 0.18);
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.35);
+}
+
+/* Tree styling — softer, with leaf glow halos for the lab feel. */
+.tree-trunk,
+.tree-branch {
+  stroke-width: 1.6;
+  opacity: 0.85;
+}
+.tree-leaf {
+  filter: drop-shadow(0 0 3px color-mix(in srgb, var(--cc) 60%, transparent));
+}
+.tree-label {
+  font-weight: 600;
+  letter-spacing: 0.22em;
+  fill: var(--text);
+  opacity: 0.92;
+}
+.tree-count {
+  font-weight: 500;
+  fill: var(--accent);
+}
+
+/* The PNG logo carries its own warm coloring; in the slate variant we
+   give it a faint cool wash so it sits on the cooler background without
+   feeling like a sticker. Subtle — keeps the original art readable. */
+.brand-mark {
+  filter: saturate(0.92) hue-rotate(-6deg);
+}
+
+/* Watermark gets a hint of the accent rather than pure --text. */
+.site-footer::after {
+  background: linear-gradient(135deg, var(--text) 0%, var(--accent3) 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  opacity: 0.04;
+}
+
+/* Pulse dot uses the brighter mint in this palette. */
+.last-updated::before {
+  background: var(--accent2);
+  box-shadow: 0 0 8px var(--accent2);
+}

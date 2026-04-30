@@ -13,10 +13,18 @@ const html = fs.readFileSync(HTML_PATH, 'utf8');
 let code = html.match(/<script>([\s\S]*?)<\/script>/)[1];
 code = code.replace(/\/\/ -- INIT --[\s\S]*$/, '');
 
-// Inject real API creds the deploy script would inject
+// Inject real API creds the deploy script would inject. Sourced from env
+// vars — never hardcode a live key here (it's a public-repo path).
+const API_URL = process.env.ARBORYX_ADMIN_API_URL;
+const API_KEY = process.env.ARBORYX_ADMIN_API_KEY;
+if (!API_URL || !API_KEY) {
+  console.error('Missing ARBORYX_ADMIN_API_URL and/or ARBORYX_ADMIN_API_KEY env vars.');
+  console.error('  Source them from arboryx_admin_backend.config (gitignored) before running.');
+  process.exit(2);
+}
 code = code
-  .replace("'__ARBORYX_ADMIN_API_URL__'", "'https://us-central1-marketresearch-agents.cloudfunctions.net/arboryx-admin-api'")
-  .replace("'__ARBORYX_ADMIN_API_KEY__'", "'***REDACTED-ADMIN-KEY***'");
+  .replace("'__ARBORYX_ADMIN_API_URL__'", `'${API_URL}'`)
+  .replace("'__ARBORYX_ADMIN_API_KEY__'", `'${API_KEY}'`);
 
 code += `
 globalThis.__api = {

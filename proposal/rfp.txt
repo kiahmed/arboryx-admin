@@ -1,0 +1,133 @@
+Here’s a cleaner, more structured, and still assertive version of your request:
+
+---
+
+I want you to build a **public-facing version of the data surfacing component**, starting with a landing page. You can reference the design of `@arborist_3.2.html`, but don’t feel constrained by it—if you have a better way to present the data, go with that.
+
+All public-facing assets should live under a new **`/frontend`** folder at the project root.
+
+### Layout
+
+The landing page should follow a **3-row structure**:
+
+* **Header (thin)**
+* **Main center console (wide, dominant)**
+* **Footer (thin)**
+
+### Header
+
+* Top-left: logo, product name, and slogan
+* Top-right: authentication options
+
+  * Sign in / Sign up
+  * Social login (Google, Facebook, X, LinkedIn, Reddit)
+  * Email signup
+* Once logged in: show profile icon with dropdown (settings + sign out)
+* For now, keep sessions in **browser cache** (we’ll move to GCP-backed auth later)
+
+---
+
+### Center Console (Core Experience)
+
+* Include a simple navigation menu (for now only: **“New Growths”**)
+* Clicking “New Growths” should open a **non-admin version** of `@arborist_3.2.html` (no edit/delete capabilities)
+* This should be implemented as `new_growth.html`, styled consistently with the homepage
+
+Main Visual Concept (Most Important)
+Render a dynamic, interactive grove visualization
+Each sector (e.g., robotics, AI stack, etc.) = one tree
+Each entry = a leaf/node on the tree
+Spatial Layout
+Trees should be well distributed across the center console
+Avoid clustering trees too close together
+Maintain enough spacing for:
+clear visibility
+easy interaction (hover/click)
+non-overlapping branches/nodes
+Layout should feel like a balanced grove, not a crowded cluster
+Consider using a grid, radial, or force-directed layout to naturally space trees while keeping the view visually organized
+Time-based coloring (last 5–7 days):
+Today → bright teal/green
+Yesterday → slightly darker
+Older → gradually fade:
+dark green → pale → yellow → orange
+Trees should not look natural—they should feel:
+mechanical
+network-based
+data-driven (nodes + edges forming branches)
+Tree density reflects activity:
+more entries → denser tree → more “growth”
+---
+
+### Interactions
+
+* **Hover on leaf:**
+
+  * subtle glow / pulse / slight scale-up
+  * soft tech-style chirp/beep sound
+
+* **Click on leaf:**
+
+  * show tooltip (max ~30 characters total) with:
+
+    * key words from title
+    * entity name
+  * navigate to `new_growth.html`
+
+    * filtered to that sector
+    * clicked entry highlighted
+
+---
+
+### Legend
+
+* Small legend explaining color → time mapping
+* Position: bottom-right or bottom-center of main console
+
+---
+
+### Footer
+
+* Social share buttons:
+
+  * X, WhatsApp, Facebook, LinkedIn, Reddit, Instagram, Telegram, Email
+  * Use native colors and icons
+
+* Follow buttons (separate):
+
+  * X and LinkedIn (for now)
+
+* Subtle watermark: **Arboryx** (non-intrusive)
+
+* Bottom-right button:
+
+  * Copyright text:
+    `© [dynamic year] Arboryx.ai – All rights reserved`
+  * This can double as a **Home button**
+
+---
+
+### General Requirements
+
+* Clean, modern design
+* High performance
+* Interactive
+* **Single-page app (no scrolling)**
+
+---
+
+### Before Implementation
+
+First:
+
+* Analyze this request carefully
+* Point out anything unclear or potentially problematic
+* Suggest improvements if I’m overlooking something to make it as a full fledged market developments catch up and filtering app for 
+the traders, investors, analysts and other market participants for them to feel its very useful and make them productive.
+
+Then:
+
+* Break it into **multi-phase implementation steps**
+* Save the plan under `@proposal/response_x.txt`
+* Wait for confirmation before starting development
+

@@ -1,0 +1,21 @@
+rules_version = '2';
+
+// Arboryx Firestore — server-only access model.
+//
+// All reads and writes flow through the Cloud Function API
+// (`arboryx-admin-api`), which authenticates via API key and runs as
+// the project's API service account. End-user clients never talk to
+// Firestore directly, so we deny everything from the public SDK path.
+//
+// When user auth lands (Firebase Auth + per-user profiles), add a
+// dedicated `users/{uid}` block here that allows authenticated reads
+// and writes scoped to `request.auth.uid`. Keep `findings/` deny-all
+// from clients — it stays a server-managed read-through resource.
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

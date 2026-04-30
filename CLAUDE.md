@@ -27,21 +27,52 @@ The data lives in GCS (`gs://marketresearch-agents/market_findings_log.json`) an
 
 ### Configuration
 - `arboryx_admin_backend.config` — GCP project, bucket, function name, API key, deploy settings (gitignored; `.example` committed)
-- `arboryx_admin_ui.config` — UI file, API URL, API key used by `deploy_ui.sh` for placeholder injection (gitignored; `.example` committed)
+- `arboryx_admin_ui.config` — UI file, API URL, API key used by `deploy_arboryx-admin.sh` for placeholder injection (gitignored; `.example` committed)
+
+## Repo Layout — separation of concerns
+
+Each Cloud Function owns its own directory with `main.py`, `requirements.txt`,
+`deploy.sh`, and (if applicable) `make_<name>_pipeline_ready.sh` + `IAM_SETUP.md`.
+Don't dump deploy scripts at root — group by functionality.
+
+```
+cloud_function/                  # API backend (arboryx-admin-api)
+  main.py  requirements.txt  deploy.sh  update.sh
+cloud_function_rotator/          # Quarterly admin-key rotator
+  main.py  requirements.txt  deploy.sh  make_rotator_pipeline_ready.sh  IAM_SETUP.md
+cloud_function_reminder/         # Quarterly rotation reminder (email)
+  main.py  requirements.txt  deploy.sh  make_reminder_pipeline_ready.sh  IAM_SETUP.md
+deploy_arboryx-admin.sh          # Admin UI deploy (root — not function-scoped)
+frontend/deploy.sh               # Public landing page deploy
+dev-utils/rotate_key.sh          # On-demand key rotation (public/admin/smtp)
+```
 
 ## Common Commands
 
 ### Deploy the API backend
 ```bash
-bash deploy_cloud_func.sh            # Auto-detects update vs full deploy
-bash deploy_cloud_func.sh --full     # Force full redeploy
-bash deploy_cloud_func.sh --dry-run  # Preview
+bash cloud_function/deploy.sh            # Auto-detects update vs full deploy
+bash cloud_function/deploy.sh --full     # Force full redeploy
+bash cloud_function/deploy.sh --dry-run  # Preview
 ```
 
-### Deploy the UI
+### Deploy the admin UI
 ```bash
-bash deploy_ui.sh                    # Injects API creds, uploads to GCS, sets public ACL
-bash deploy_ui.sh --dry-run
+bash deploy_arboryx-admin.sh             # Injects API creds, uploads to GCS, sets public ACL
+bash deploy_arboryx-admin.sh --dry-run
+```
+
+### Deploy the rotator (quarterly admin-key rotation)
+```bash
+bash cloud_function_rotator/make_rotator_pipeline_ready.sh   # one-time: SA + IAM
+bash cloud_function_rotator/deploy.sh                        # function + scheduler
+```
+
+### Deploy the reminder (quarterly email nudge)
+```bash
+bash cloud_function_reminder/make_reminder_pipeline_ready.sh # one-time: SA + IAM
+bash dev-utils/rotate_key.sh smtp                            # push SMTP password to Secret Manager
+bash cloud_function_reminder/deploy.sh                       # function + scheduler
 ```
 
 ### Test the deployed API

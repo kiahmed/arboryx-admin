@@ -1,0 +1,130 @@
+/* =========================================================================
+   Arboryx design tokens — shared across all public surfaces (/frontend/*).
+
+   Lifted from arborist_3.2.html so the public landing inherits the exact
+   admin aesthetic. Only the leaf-recency gradient (--leaf-d0..d6) is new
+   — added here in Phase 3 so Phase 4 can wire it without touching this
+   file again.
+   ========================================================================= */
+
+:root {
+  /* --- Surface stack ---
+     Edit --bg to try different shades site-wide. All site chrome
+     (header, footer, body, tooltips) derives from these via color-mix.
+     Examples to try:
+       #080b10  — original deep navy
+       #1b2434  — slate / gunmetal (matches index_v2 default)
+       #1a1a1a  — true charcoal
+       #222222  — medium charcoal
+       #2a2a2a  — lighter charcoal
+       #1f1f23  — warm dark gray  */
+  --bg: #222222;
+  --surface: #0e1420;
+  --surface2: #121a28;
+
+  /* --- Borders / dividers --- */
+  --border: #1c2740;
+  --border2: #243050;
+  --dim: #2a3a58;
+
+  /* --- Text --- */
+  --text: #c8d6f0;
+  --muted: #4a5e80;
+
+  /* --- Accents --- */
+  --accent: #f0b840;
+  /* gold — primary brand */
+  --accent2: #3de8b0;
+  /* mint — fresh / today */
+  --accent3: #5b9cf6;
+  /* blue — link / focus */
+  --danger: #f04860;
+
+  /* --- Sector palette (1 per category, fixed in admin order) --- */
+  --cat0: #a78bfa;
+  /* violet */
+  --cat1: #3de8b0;
+  /* mint */
+  --cat2: #5b9cf6;
+  /* blue */
+  --cat3: #f0b840;
+  /* gold */
+  --cat4: #f07840;
+  /* orange */
+  --cat5: #80e040;
+  /* lime */
+  --cat6: #f04860;
+  /* red */
+  --cat7: #38bdf8;
+  /* cyan */
+  --cat8: #fb923c;
+  /* warm-orange */
+  --cat9: #a3e635;
+  /* yellow-green */
+
+  /* --- Leaf recency gradient (today → 7d) ---
+     Used by the grove (Phase 4). Exposed here so the legend renders
+     the same colors as the leaves themselves. */
+  --leaf-d0: #3de8b0;
+  /* today      — bright mint */
+  --leaf-d1: #2bbf86;
+  /* yesterday  — darker green */
+  --leaf-d2: #6fb86b;
+  /* 2-3 d      — pale green */
+  --leaf-d3: #c8c860;
+  /* 3-4 d      — yellow-green */
+  --leaf-d4: #e8b540;
+  /* 4-5 d      — amber */
+  --leaf-d5: #e88430;
+  /* 5-6 d      — orange */
+  --leaf-d6: #e05a30;
+  /* 6-7 d      — deep orange */
+
+  /* --- Typography --- */
+  --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+  --font-display: 'Syne', system-ui, sans-serif;
+
+  /* --- Spacing rhythm --- */
+  --gap-xs: 4px;
+  --gap-sm: 8px;
+  --gap-md: 14px;
+  --gap-lg: 22px;
+  --gap-xl: 36px;
+
+  /* --- Radii --- */
+  --r-sm: 4px;
+  --r-md: 7px;
+  --r-lg: 10px;
+
+  /* --- Chrome rhythm --- */
+  --header-h: 88px;
+  --footer-h: 52px;
+}
+
+/* Reset */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  font-family: var(--font-mono);
+  background: var(--bg);
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+button {
+  font-family: inherit;
+  color: inherit;
+}
+
+a {
+  color: inherit;
+}

@@ -7,3 +7,9 @@ __pycache__/
 arboryx_admin_backend.config
 arboryx_admin_ui.config
 notes.txt
+frontend/arboryx_frontend.config
+frontend/scripts/config.js
+# Rotation / config backups produced by dev-utils/rotate_key.sh — they
+# can carry live secrets and must never reach the index.
+*.bak
+*.bak.*

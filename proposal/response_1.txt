@@ -1,0 +1,260 @@
+================================================================================
+ARBORYX PUBLIC LANDING — RESPONSE TO RFP
+Author: claude-code (Opus 4.7)
+Date:   2026-04-25
+Inputs: proposal/rfp.txt
+================================================================================
+
+This response is structured in three parts, per the RFP's "Before
+Implementation" instructions:
+
+  1. Ambiguities & risks flagged
+  2. Improvements suggested for the trader/investor/analyst persona
+  3. Multi-phase implementation plan
+
+No code is written yet. Awaiting confirmation on the items in §1 and §3
+Phase 0 before development starts.
+
+--------------------------------------------------------------------------------
+1. AMBIGUITIES & RISKS — NEED ANSWERS BEFORE WE CODE
+--------------------------------------------------------------------------------
+
+A. PUBLIC API ACCESS — SECURITY GAP
+   The current `deploy_ui.sh` injects `__ARBORYX_ADMIN_API_KEY__` into the
+   shipped HTML. That key is the same one that authorizes the new
+   `update`/`delete` write endpoints we just added. Embedding it in the
+   public landing means anyone who views source can write to the bucket.
+
+   Options (pick one):
+     (a) Add a separate READ-ONLY API key. Function checks the key against
+         a "read-only" list and rejects writes. Cleanest split.
+     (b) Make `findings`, `stats`, `categories` unauthenticated GETs,
+         keep auth on `update`/`delete`/`refresh`. Simpler; assumes the
+         data itself is fine to be public (it is — it's market commentary,
+         not PII).
+     (c) Stand up a thin public proxy Cloud Function that adds the key
+         server-side. Most overhead, no real security gain over (a)/(b).
+
+   Recommendation: (b). The data is meant to be seen.
+
+B. AUTH UI vs REAL AUTH
+   RFP says "keep sessions in browser cache (we'll move to GCP-backed auth
+   later)". A browser-cache "session" is just a localStorage flag — there
+   is no real account, no server validation. So the social login buttons
+   (Google, Facebook, X, LinkedIn, Reddit) and email signup are
+   essentially decorative until phase 6.
+
+   Three honest paths:
+     (a) Stub all auth buttons with a "Coming soon — join the early access
+         list" toast. Capture email via a simple form → mailto: or a free
+         Formspree/Buttondown endpoint. Honest, ships fast.
+     (b) Implement client-only OAuth PKCE flows that decode the JWT for
+         display name + avatar but do nothing server-side. Looks real,
+         is theater, fragile.
+     (c) Defer all auth UI to phase 6. Header just shows "Sign in
+         (coming soon)" placeholder.
+
+   Recommendation: (a). Email capture is the only auth interaction that
+   actually does anything useful pre-backend.
+
+C. NO-SCROLL SPA AT 360px IS HOSTILE
+   6 trees + header + footer at phone widths gives each tree ~180px tall.
+   With WCAG's 24×24px minimum tap target, that fits ~7 leaves per tree
+   max — and our sectors regularly hit 30–50.
+
+   Options:
+     (a) Strict no-scroll desktop, vertical scroll on mobile (≤768px).
+         "No scroll" becomes a desktop promise, not a universal one.
+     (b) Mobile: render ONE active sector tree at a time with a chip-row
+         sector switcher. No scroll, but you only see one tree at once.
+     (c) Stack trees in a 2×3 grid on mobile and accept tiny leaves.
+
+   Recommendation: (a) for v1, (b) as a polish pass.
+
+D. LEAVES-AS-NODES vs LEAVES-AS-FOLIAGE
+   The RFP says "trees should not look natural — they should feel
+   mechanical, network-based, data-driven (nodes + edges forming
+   branches)". So a "leaf" here is a small geometric node (rounded
+   square with a centered dot, ~14–18px) connected by stroked edges to
+   a branch — NOT an organic leaf shape. Confirming this is the
+   intended read.
+
+E. TREE COLOR vs LEAF COLOR
+   RFP specifies recency-driven leaf color (today→teal, fade→orange).
+   The existing UI uses a per-category palette (cat0–cat9). Recommended
+   split:
+     - Trunk + branches = sector color (from existing palette).
+     - Leaves = recency color (new 5-step gradient).
+   Confirm.
+
+F. TOOLTIP ≤30 CHARACTERS
+   "Key words from title + entity name" in 30 chars is very tight, and
+   the data has no explicit "title" or "entity" field — only a long
+   `finding` string. Two paths:
+     (a) Truncate the first N words of `finding`. Cheap, often awkward.
+     (b) Have arboryx.ai (the producer pipeline) emit a new short_title
+         and primary_entity field per entry. Cleanest.
+   Recommendation: ship (a) for v1, file (b) as a follow-up against the
+   sibling repo.
+
+G. NO SINGLE-ENTRY-BY-ID ENDPOINT
+   For the click-through "highlighted entry" deep link, new_growth.html
+   either re-fetches all and filters, or we add `?action=entry&id=X`.
+   The latter is ~10 lines of Python. Adding it.
+
+H. TIMESTAMP FORMAT INCONSISTENCY
+   Raw findings have mixed ISO ("2026-04-10 18:13:55") and human
+   ("March 24, 2026") timestamps. Grove recency coloring depends on
+   parsing this. Cleanest is normalizing in the API response so the
+   client doesn't replicate `_normalize_timestamp` logic.
+
+I. SLOGAN
+   RFP says top-left has "logo, product name, and slogan." We have the
+   logo and product name (Arboryx). What's the slogan?
+
+J. INSTAGRAM SHARE
+   Instagram has no web share URL like Twitter/Facebook. On mobile we
+   can deeplink to the app; on desktop the best UX is a "copy link"
+   fallback. Flagging — others (X, WhatsApp, FB, LinkedIn, Reddit,
+   Telegram, Email) all support web share URLs cleanly.
+
+K. "EMAIL SIGNUP" SEPARATE FROM SIGN UP?
+   The header lists "Sign in / Sign up" AND "Email signup" as distinct
+   options. Is the second a newsletter capture (different intent), or
+   redundant? Reading it as newsletter capture.
+
+--------------------------------------------------------------------------------
+2. IMPROVEMENTS — TO MAKE IT PRODUCTIVE FOR TRADERS/INVESTORS/ANALYSTS
+--------------------------------------------------------------------------------
+
+The RFP's "make them productive" goal needs more than a pretty grove.
+Suggesting these as additive, with the ones marked [v1] inside the
+initial scope and the rest staged.
+
+  [v1] LAST-UPDATED PULSE
+       Tiny "Last updated 4m ago" stamp in the legend area, with a
+       subtle dot animation when new entries land. Builds trust that
+       the data is fresh — critical for traders.
+
+  [v1] PERMALINKABLE VIEWS
+       URL like `/new_growth.html?sector=Robotics&entry=ROB-041926-001`
+       opens with that sector filtered and that card auto-scrolled +
+       highlighted. Lets users share specific findings into Slack/X.
+
+  [v1] KEYBOARD NAV
+       [1]–[6] jump between trees, arrow keys walk leaves on the
+       focused tree, [Enter] opens. Power users will love it; first
+       visit shows a 2-second hint overlay.
+
+  [v2] TIME-RANGE SLIDER
+       Default 7d, but offer 14d / 30d to see pre-news drift. The grove
+       redraws with the same color buckets stretched.
+
+  [v2] TICKER SEARCH CHIP
+       Pinned to the legend. Type "TSLA" → all leaves whose finding
+       mentions TSLA glow across every sector. Massive trader value.
+
+  [v2] PER-TREE PULSE SPARKLINE
+       Tiny inline 7-day entries-per-day sparkline next to each tree
+       label. Lets analysts see *acceleration*, not just count.
+
+  [v3] WATCHLIST PINNING
+       Pin specific entries to a tray that persists across sessions.
+       Browser-cache only until real auth.
+
+--------------------------------------------------------------------------------
+3. PHASED IMPLEMENTATION PLAN
+--------------------------------------------------------------------------------
+
+PHASE 0 — DECISIONS (blocking, ~5 min of user time)
+  - Pick options for §1 A, B, C, D, E, F, K above
+  - Provide slogan (§1 I)
+  - Confirm v1 improvement scope from §2
+
+PHASE 1 — API READ PATH HARDENING (backend only, no UI)
+  Files: cloud_function/main.py, deploy_cloud_func.sh
+  - Add unauth read for findings/stats/categories (or read-only key —
+    per §1 A decision)
+  - Add `?action=entry&id=X` endpoint
+  - Normalize timestamps in response payloads (§1 H)
+  - Update dev-utils/test_api.py to cover the new endpoint
+  - Deploy via `bash deploy_cloud_func.sh`
+  - Smoke-test live
+
+PHASE 2 — FRONTEND SCAFFOLD
+  Files: frontend/{index.html, new_growth.html, styles/, scripts/, assets/}
+  - Create /frontend folder at repo root
+  - Extract design tokens from arborist_3.2.html into
+    frontend/styles/tokens.css (colors, fonts, spacing — see audit)
+  - Build the 3-row shell of index.html (header, main, footer) with
+    responsive layout primitives
+  - Header: logo + name + slogan, auth-stub buttons (per §1 B), email
+    capture form
+  - Footer: share buttons (with Instagram fallback per §1 J), follow
+    buttons (X + LinkedIn), watermark, dynamic-year copyright/home
+  - Responsive policy: strict no-scroll desktop, vertical mobile
+
+PHASE 3 — GROVE VISUALIZATION
+  Files: frontend/scripts/grove.js, frontend/styles/grove.css
+  - SVG, vanilla JS, NO new dependencies
+  - 3×2 CSS grid of 6 SVG viewports (one per sector), responsive to
+    1×6 stack on mobile
+  - Deterministic radial-per-tree layout: trunk at bottom, branches
+    at fixed angles, leaves placed via golden-ratio increments with
+    collision nudging
+  - Trunk colored by sector (existing palette); leaves colored by
+    5-bucket recency gradient
+  - Hover: CSS transform scale + drop-shadow glow + soft Web Audio
+    chirp (gated on first user gesture, default-muted on mobile and
+    on prefers-reduced-motion, mute toggle in legend)
+  - Click: tooltip with truncated keywords + entity (~30 chars), then
+    navigate to new_growth.html with deep-link params
+  - Legend (bottom-right): color→time mapping + last-updated pulse +
+    mute toggle + (v1) keyboard hint
+  - Accessibility: leaves are real <g role="button"> nodes, ARIA
+    labels, tab order, focus rings
+
+PHASE 4 — new_growth.html (READ-ONLY MIRROR)
+  Files: frontend/new_growth.html
+  - Clone arborist_3.2.html shell
+  - Strip admin: edit/delete buttons, edit modal, all .modal-* CSS,
+    apiWrite/handleSave/handleDelete (specific selectors enumerated
+    in the audit)
+  - Wire deep-link params: ?sector=X filters category dropdown,
+    ?entry=Y auto-scrolls + highlights that card with a brief flash
+  - Reuse header/footer chrome from index.html (consistency)
+
+PHASE 5 — DEPLOY PIPELINE
+  Files: deploy_ui.sh
+  - Extend the existing script to upload the /frontend tree (HTML,
+    CSS, JS, assets) under the bucket root
+  - Inject API URL/key placeholders into all HTML files in /frontend
+  - Set public-read ACL per object (matches existing posture)
+  - Update README.md with public landing URL + deploy notes
+  - Smoke-test with dev-utils/test_ui_render.js + test_ui_live.js
+
+PHASE 6 — POWER-USER POLISH (v2 improvements from §2)
+  - Time-range slider
+  - Ticker search chip
+  - Per-tree pulse sparklines
+  - Watchlist pinning (stretch)
+
+PHASE 7 — REAL AUTH (deferred, separate RFP recommended)
+  GCP-backed auth, OAuth flows, session storage, account-bound
+  watchlists. Out of scope here; raise as a separate RFP when ready.
+
+--------------------------------------------------------------------------------
+ESTIMATES (rough, subject to scope)
+--------------------------------------------------------------------------------
+  Phase 1: ~1 session
+  Phase 2: ~1 session
+  Phase 3: ~2 sessions (grove is the high-craft piece)
+  Phase 4: ~0.5 session
+  Phase 5: ~0.5 session
+  Phase 6: ~2 sessions (each v2 feature ~0.5 session)
+
+--------------------------------------------------------------------------------
+NEXT STEP
+--------------------------------------------------------------------------------
+Awaiting your responses on §1 (A–K) and §2 v1 scope confirmation.
+Once those land, Phase 1 can start immediately.
