@@ -10,7 +10,7 @@
         rotate-key list-secrets sync-firestore dev-setup \
         test test-auth test-api test-ui test-ui-live test-frontend \
         build clean \
-        worktree-clean _notmain commit push pr ship
+        worktree-clean _notmain guard commit push pr ship
 
 # ---- colors --------------------------------------------------------------
 C_CYAN   := \033[36m
@@ -33,6 +33,13 @@ _DRY   := $(if $(DRY),--dry-run)
 _FULL  := $(if $(FULL),--full)
 PORT   ?= 8000
 SA     := dev-utils/service_account.json
+
+# Positional arg for `ship` / `worktree-clean` (e.g. `make ship my-feature`).
+# The trailing goal is turned into a no-op so make doesn't try to build it.
+_POSARG := $(strip $(filter-out ship worktree-clean,$(MAKECMDGOALS)))
+ifneq (,$(filter ship worktree-clean,$(firstword $(MAKECMDGOALS))))
+$(if $(_POSARG),$(eval $(_POSARG):;@:))
+endif
 
 # ==========================================================================
 #  API backend (Cloud Function: arboryx-admin-api)
@@ -168,29 +175,33 @@ clean:            ## Remove build artifacts + caches (dist/, __pycache__, *.pyc)
 # ==========================================================================
 #  Worktree cleanup
 # ==========================================================================
-worktree-clean:   ## Remove MERGED worktrees everywhere [name] [FORCE=1]
-	@bash dev-utils/worktree-clean.sh "$(filter-out $@,$(MAKECMDGOALS))" "FORCE=$(FORCE)"
-
-# Let the worktree name be positional (`make worktree-clean <name>`): turn the
-# trailing name into a no-op goal. Scoped to worktree-clean so it never masks
-# typos in other targets.
-ifeq (worktree-clean,$(firstword $(MAKECMDGOALS)))
-$(if $(filter-out worktree-clean,$(MAKECMDGOALS)),\
-     $(eval $(filter-out worktree-clean,$(MAKECMDGOALS)):;@:))
-endif
+worktree-clean:   ## Return primary tree to main + delete its branch; also clean MERGED worktrees [name] [FORCE=1]
+	@bash dev-utils/worktree-clean.sh "$(_POSARG)" "FORCE=$(FORCE)"
 
 # ==========================================================================
-#  Git workflow (run inside a worktree branch, never on main)
+#  Git workflow — hands stay on `ship` and `worktree-clean`; the branch
+#  hopping is the tooling's job. Start on main; `ship` cuts a branch and parks
+#  you on it, `worktree-clean` returns you to main and deletes it.
 # ==========================================================================
 _notmain:
 	@test "$$(git rev-parse --abbrev-ref HEAD)" != main \
-	  || { echo "refusing: you're on main — switch to a worktree branch"; exit 1; }
+	  || { echo "refusing: you're on main — use 'make ship' (it branches for you)"; exit 1; }
 
-commit push pr ship: _notmain
+commit push pr: _notmain
 
-commit:           ## Stage all + commit (m="message")
+guard:            ## Secret-scan the staged diff (auto-runs before every commit)
+	@staged="$$(git diff --cached --name-only)"; \
+	 bad="$$(printf '%s\n' "$$staged" | grep -iE 'service_account.*\.json$$|(^|/)[a-z0-9_]*_(ui|backend)\.config$$|(^|/)\.env$$|_frontend\.config$$|\.pem$$|\.p12$$' || true)"; \
+	 if [ -n "$$bad" ]; then echo "GUARD: refusing — sensitive file(s) staged:"; printf '%s\n' "$$bad" | sed 's/^/  /'; exit 1; fi; \
+	 if git diff --cached -U0 | grep -qE -- '-----BEGIN [A-Z ]*PRIVATE KEY-----|"private_key"[[:space:]]*:|"type"[[:space:]]*:[[:space:]]*"service_account"'; then \
+	   echo "GUARD: refusing — private-key / service-account material in staged diff"; exit 1; fi; \
+	 echo "guard: no secrets staged ✓"
+
+commit:           ## Stage all + secret-scan + commit (m="message")
 	@test -n "$(m)" || { echo 'usage: make commit m="message"'; exit 2; }
-	git add -A && git commit -m "$(m)"
+	git add -A
+	@$(MAKE) --no-print-directory guard
+	git commit -m "$(m)"
 
 push:             ## Push the current branch to origin (sets upstream)
 	git push -u origin $$(git rev-parse --abbrev-ref HEAD)
@@ -198,11 +209,25 @@ push:             ## Push the current branch to origin (sets upstream)
 pr:               ## Open a draft PR from the current branch (auto-filled)
 	gh pr create --draft --fill --base main --head $$(git rev-parse --abbrev-ref HEAD)
 
-ship:             ## commit + push + draft PR in one (m="message")
-	@test -n "$(m)" || { echo 'usage: make ship m="message"'; exit 2; }
-	git add -A && git commit -m "$(m)"
-	git push -u origin $$(git rev-parse --abbrev-ref HEAD)
-	gh pr create --draft --fill --base main --head $$(git rev-parse --abbrev-ref HEAD)
+ship:             ## From main: cut ship/<stamp> (or [name]/current), scan, commit, push, draft PR (m="msg")
+	@test -n "$(m)" || { echo 'usage: make ship m="message" [branch-name]'; exit 2; }
+	@test -n "$$(git status --porcelain)" || { echo 'nothing to ship — working tree is clean'; exit 2; }
+	@set -e; \
+	 name="$(_POSARG)"; cur="$$(git rev-parse --abbrev-ref HEAD)"; \
+	 if [ -n "$$name" ]; then \
+	   br="$$name"; \
+	   if git rev-parse --verify "$$br" >/dev/null 2>&1; then [ "$$cur" = "$$br" ] || git checkout "$$br"; \
+	   else git checkout -b "$$br"; fi; \
+	 elif [ "$$cur" = "main" ]; then \
+	   br="ship/$$(date +%Y%m%d-%H%M%S)"; git checkout -b "$$br"; \
+	 else br="$$cur"; fi; \
+	 echo "shipping on: $$br"; \
+	 git add -A; \
+	 $(MAKE) --no-print-directory guard; \
+	 git commit -m "$(m)"; \
+	 git push -u origin "$$br"; \
+	 gh pr create --draft --fill --base main --head "$$br"; \
+	 echo "→ you are on $$br; after the PR merges run: make worktree-clean"
 
 # ==========================================================================
 #  Help
