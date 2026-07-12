@@ -54,20 +54,16 @@ if [[ ! -f "$UI_PATH" ]]; then
 fi
 
 API_URL="${API_URL:-}"
-API_KEY="${API_KEY:-}"
 
 if [[ -z "$API_URL" ]]; then
     err "API_URL is not set in arboryx_admin_ui.config"
     exit 1
 fi
-if [[ -z "$API_KEY" ]]; then
-    err "API_KEY is not set in arboryx_admin_ui.config"
-    exit 1
-fi
 
-# Check that source file has placeholders (not already injected)
-if ! grep -q '__ARBORYX_ADMIN_API_URL__' "$UI_PATH" || ! grep -q '__ARBORYX_ADMIN_API_KEY__' "$UI_PATH"; then
-    err "Placeholders not found in $UI_FILE — has it already been injected into the source?"
+# The admin UI no longer embeds an API key — operators sign in for a session
+# token instead. Only the API_URL placeholder is injected at deploy time.
+if ! grep -q '__ARBORYX_ADMIN_API_URL__' "$UI_PATH"; then
+    err "Placeholder __ARBORYX_ADMIN_API_URL__ not found in $UI_FILE — has it already been injected into the source?"
     exit 1
 fi
 
@@ -82,13 +78,13 @@ info "Project  : $PROJECT_ID"
 info "Bucket   : $STORAGE_BUCKET"
 info "File     : $UI_FILE"
 info "API URL  : $API_URL"
-info "API Key  : ***${API_KEY: -4}"
+info "Auth     : session login (no key embedded in page)"
 info "Dest     : $GCS_DEST"
 echo ""
 
 # -- Dry run --
 if [[ "$DRY_RUN" == true ]]; then
-    info "Would inject API_URL and API_KEY into temp copy of $UI_FILE"
+    info "Would inject API_URL into temp copy of $UI_FILE"
     info "Would run: gsutil -h Content-Type:text/html -h Cache-Control:no-cache,max-age=0 cp <temp> \"$GCS_DEST\""
     info "Would run: gsutil acl ch -u AllUsers:R \"$GCS_DEST\""
     info "Would upload assets/favicon.ico to gs://${STORAGE_BUCKET}/favicon.ico (if not already present)"
@@ -97,14 +93,13 @@ if [[ "$DRY_RUN" == true ]]; then
     exit 0
 fi
 
-# -- Build temp file with injected API key --
+# -- Build temp file with injected API URL --
 TMPFILE=$(mktemp)
 trap 'rm -f "$TMPFILE"' EXIT
 
 sed -e "s|__ARBORYX_ADMIN_API_URL__|${API_URL}|g" \
-    -e "s|__ARBORYX_ADMIN_API_KEY__|${API_KEY}|g" \
     "$UI_PATH" > "$TMPFILE"
-info "API_URL and API_KEY injected into temp build."
+info "API_URL injected into temp build."
 
 # -- Upload --
 info "Uploading ${UI_FILE}..."
