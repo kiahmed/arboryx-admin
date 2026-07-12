@@ -20,8 +20,10 @@ The data lives in GCS (`gs://marketresearch-agents/market_findings_log.json`) an
 - `cloud_function/main.py` — Python 3.12, 2nd gen Cloud Function (HTTP trigger)
 - Function name: `arboryx-admin-api` (see `arboryx_admin_backend.config`)
 - Reads `market_findings_log.json` from GCS, serves filtered JSON
-- Query params: `?action=findings|categories|stats|health|cache_status|refresh`, `&category=X`, `&days=N`, `&limit=N`, `&offset=M`, `&date=YYYY-MM-DD`, `&sort=asc|desc`
-- API key auth via `X-API-Key` header (all endpoints except health + OPTIONS)
+- Query params: `?action=findings|categories|stats|health|cache_status|refresh|login|logout|session`, `&category=X`, `&days=N`, `&limit=N`, `&offset=M`, `&date=YYYY-MM-DD`, `&sort=asc|desc`
+- Two auth schemes (all endpoints except health + `login` + OPTIONS):
+  - **Session login** (admin UI): `POST ?action=login` with `{username,password}` → opaque session token, sent back as `X-Session-Token` on every request. Only the token's SHA-256 hash is stored in Firestore (`admin_sessions/current`); the constant doc id enforces **one active session** (a new login supersedes the old). `logout` clears it. Credentials live in Secret Manager (`arboryx-admin-users`), managed by `dev-utils/manage_admin_users.sh`. A valid session = full write access.
+  - **API key** (programmatic/back-compat): `X-API-Key` / `Bearer`, write vs read-only tiers.
 - CORS enabled for browser access
 - Singleton `storage.Client` + in-memory cache across invocations
 
@@ -58,8 +60,17 @@ bash cloud_function/deploy.sh --dry-run  # Preview
 
 ### Deploy the admin UI
 ```bash
-bash deploy_arboryx-admin.sh             # Injects API creds, uploads to GCS, sets public ACL
+bash deploy_arboryx-admin.sh             # Injects API_URL (no key — UI uses login), uploads to GCS, sets public ACL
 bash deploy_arboryx-admin.sh --dry-run
+```
+
+### Manage admin UI login users (no sign-up path exists — accounts are created here)
+```bash
+bash dev-utils/manage_admin_users.sh create [username]   # gen strong pw (default user: kazi-admin)
+bash dev-utils/manage_admin_users.sh rotate [username]   # regenerate a user's password
+bash dev-utils/manage_admin_users.sh list                # show all users + passwords (plaintext, from Secret Manager)
+bash dev-utils/manage_admin_users.sh get <username>      # show one user's password
+bash dev-utils/manage_admin_users.sh delete <username>
 ```
 
 ### Deploy the rotator (quarterly admin-key rotation)

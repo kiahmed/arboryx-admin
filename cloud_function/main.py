@@ -4,15 +4,26 @@ Reads market findings from GCS and serves them as JSON.
 Includes API key authentication, in-memory caching, pagination,
 and production logging.
 
-Authentication:
-    All endpoints except OPTIONS preflight and ?action=health require
-    a valid API key. Send via:
-        X-API-Key: <key>
-        Authorization: Bearer <key>
-    Two key tiers:
-        API_KEY / API_KEYS         -> write-enabled (admin). Pass everywhere.
-        READ_ONLY_API_KEYS         -> public read-only. Rejected with 403
-                                      on update/delete/refresh.
+Authentication (two independent schemes):
+    1. Browser session (used by the admin UI — no key embedded in the page):
+        POST ?action=login {username, password}  -> mints an opaque session
+             token; only its SHA-256 hash is stored in Firestore, doc id is a
+             constant so each login supersedes the prior one (ONE active session).
+        Send the token on every subsequent request as:
+             X-Session-Token: <token>
+        A valid session grants FULL (write-enabled) access.
+        POST ?action=logout   -> invalidate the active session.
+        GET  ?action=session  -> validate token, return {username, expires_at}.
+        Credentials live in Secret Manager secret `arboryx-admin-users`
+        (JSON {username: password}), managed via dev-utils/manage_admin_users.sh.
+    2. API key (programmatic clients / back-compat). Send via:
+        X-API-Key: <key>   or   Authorization: Bearer <key>
+        Two key tiers:
+            API_KEY / API_KEYS   -> write-enabled (admin). Pass everywhere.
+            READ_ONLY_API_KEYS   -> public read-only. Rejected with 403
+                                    on update/delete/refresh.
+    All endpoints except OPTIONS preflight, ?action=health, and ?action=login
+    require one of the above.
 
 Endpoints (via ?action= query param):
     GET  ?action=findings                  -> all findings (optionally filtered)
@@ -26,6 +37,9 @@ Endpoints (via ?action= query param):
     GET  ?action=stats                     -> total findings, category breakdown, date range
     GET  ?action=stats&days=N              -> same shape, filtered to the last N days
     GET  ?action=health                    -> health check (no auth required)
+    POST ?action=login                     -> sign in (username+password) -> session token
+    POST ?action=logout                    -> end the active session
+    GET  ?action=session                   -> validate session token, return username
     GET  ?action=cache_status              -> cache hit count, last refresh, TTL, entry count
     GET  ?action=refresh                   -> force cache invalidation and reload (write key only)
     POST ?action=update                    -> update an entry by entry_id (JSON body, write key only)
@@ -46,9 +60,12 @@ Query parameter validation:
 import os
 import re
 import gzip
+import hmac
 import json
 import time
+import hashlib
 import logging
+import secrets
 import contextvars
 from datetime import datetime, timedelta, timezone
 from google.cloud import storage
@@ -110,6 +127,30 @@ _READ_ONLY_API_KEYS_RAW = os.environ.get("READ_ONLY_API_KEYS", "")
 _WRITE_KEYS: set = set()
 _READ_ONLY_KEYS: set = set()
 _VALID_KEYS: set = set()
+
+# ---------------------------------------------------------------------------
+# Admin login sessions (Track B — browser auth without a key in the HTML)
+# ---------------------------------------------------------------------------
+# The admin UI no longer embeds an API key. Instead the operator signs in with
+# a username + password; the function mints an opaque session token, stores
+# ONLY its SHA-256 hash in Firestore (doc `admin_sessions/current`), and hands
+# the raw token back to the browser. Because the doc id is a constant, each
+# successful login overwrites the previous one — enforcing exactly ONE active
+# session at a time. Sign-out deletes the doc.
+#
+# Credentials live in Secret Manager as secret `arboryx-admin-users`, a JSON
+# object {username: password}. Managed via dev-utils/manage_admin_users.sh.
+ADMIN_USERS_SECRET = os.environ.get("ADMIN_USERS_SECRET", "arboryx-admin-users")
+SESSION_COLLECTION = os.environ.get("SESSION_COLLECTION", "admin_sessions")
+SESSION_DOC_ID = os.environ.get("SESSION_DOC_ID", "current")
+SESSION_TTL_SECONDS = int(os.environ.get("SESSION_TTL_SECONDS", "43200"))  # 12h
+# Brute-force dampener: after LOGIN_MAX_FAILS bad passwords from one IP, lock
+# that IP out for LOGIN_LOCKOUT_SECONDS. Per-instance/in-memory — the real
+# protection is a high-entropy generated password + the global rate limiter;
+# this just makes online guessing pointless.
+LOGIN_MAX_FAILS = int(os.environ.get("LOGIN_MAX_FAILS", "5"))
+LOGIN_LOCKOUT_SECONDS = int(os.environ.get("LOGIN_LOCKOUT_SECONDS", "300"))
+_login_fails: dict = {}  # ip -> {"count": int, "until": epoch}
 
 _secret_client = None
 
@@ -451,6 +492,8 @@ def _apply_update(findings, original_entry_id, patch):
 # cover production GCS/Firebase hosting + local dev; extend via env var
 # in cloud_function/deploy.sh without code changes.
 _DEFAULT_ALLOWED_ORIGINS = (
+    "https://arboryx.ai,"
+    "https://www.arboryx.ai,"
     "https://storage.googleapis.com,"
     "https://arboryx-ai.web.app,"
     "https://arboryx-ai.firebaseapp.com,"
@@ -488,7 +531,7 @@ def _cors_response(data, status=200):
     origin = _request_origin.get()
     headers = {
         "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-        "Access-Control-Allow-Headers": "Content-Type, Authorization, X-API-Key, If-None-Match",
+        "Access-Control-Allow-Headers": "Content-Type, Authorization, X-API-Key, X-Session-Token, If-None-Match",
         "Access-Control-Expose-Headers": "ETag",
         "Access-Control-Max-Age": "3600",
         # Origin AND Accept-Encoding both vary the response — caches must
@@ -548,7 +591,7 @@ def _not_modified_response(generation):
     origin = _request_origin.get()
     headers = {
         "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-        "Access-Control-Allow-Headers": "Content-Type, Authorization, X-API-Key, If-None-Match",
+        "Access-Control-Allow-Headers": "Content-Type, Authorization, X-API-Key, X-Session-Token, If-None-Match",
         "Access-Control-Expose-Headers": "ETag",
         "Access-Control-Max-Age": "3600",
         "Vary": "Origin, Accept-Encoding",
@@ -646,6 +689,149 @@ def _authenticate(request, requires_write=False):
         return _error_response("This action requires a write-enabled API key.", 403)
 
     return None
+
+
+# ---------------------------------------------------------------------------
+# Admin session auth (login / logout / session validation)
+# ---------------------------------------------------------------------------
+def _hash_token(token: str) -> str:
+    """SHA-256 hex of a session token. Only the hash is ever persisted."""
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def _fetch_admin_users() -> dict:
+    """Return {username: password} from Secret Manager, or {} on any error.
+
+    Reads only the single LATEST enabled version (unlike API keys, there is no
+    multi-version overlap for the user map). Fetched fresh per login — logins
+    are rare, so a rotation takes effect immediately with no cache to bust.
+    """
+    client = _get_secret_client()
+    if client is None:
+        return {}
+    name = f"projects/{PROJECT_ID}/secrets/{ADMIN_USERS_SECRET}/versions/latest"
+    try:
+        payload = client.access_secret_version(request={"name": name})
+        raw = payload.payload.data.decode("utf-8").strip()
+        data = json.loads(raw) if raw else {}
+        # Coerce to str:str; ignore malformed entries.
+        return {str(k): str(v) for k, v in data.items() if k and v}
+    except Exception as exc:
+        logging.warning("Failed to load admin users secret: %s", exc)
+        return {}
+
+
+def _verify_credentials(username: str, password: str) -> bool:
+    """Constant-time credential check that does not leak which field was wrong.
+
+    Always performs a compare_digest against SOMETHING so response timing does
+    not reveal whether the username exists (user-enumeration defense).
+    """
+    users = _fetch_admin_users()
+    stored = users.get(username or "")
+    # Dummy compare when the user is absent keeps the timing profile flat.
+    reference = stored if stored is not None else "\x00invalid-placeholder"
+    ok = hmac.compare_digest(password or "", reference)
+    return bool(stored is not None and ok)
+
+
+def _session_doc_ref():
+    """Firestore ref for the single active-session doc."""
+    return (
+        _get_firestore_client()
+        .collection(SESSION_COLLECTION)
+        .document(SESSION_DOC_ID)
+    )
+
+
+def _create_session(username: str, ip: str) -> dict:
+    """Mint a session, persist only its hash, and return {token, expires_at}.
+
+    Overwrites any existing session doc -> only one session is ever valid.
+    """
+    token = secrets.token_urlsafe(32)
+    now = int(time.time())
+    expires_at = now + SESSION_TTL_SECONDS
+    _session_doc_ref().set({
+        "token_hash": _hash_token(token),
+        "username": username,
+        "ip": ip,
+        "issued_at": now,
+        "expires_at": expires_at,
+    })
+    return {"token": token, "username": username, "expires_at": expires_at}
+
+
+def _validate_session_token(token: str):
+    """Return the session dict if `token` matches the active session and is
+    unexpired, else None. Expired/mismatched tokens are treated as no session.
+    """
+    if not token:
+        return None
+    try:
+        snap = _session_doc_ref().get()
+    except Exception as exc:
+        logging.warning("Session lookup failed: %s", exc)
+        return None
+    if not snap.exists:
+        return None
+    doc = snap.to_dict() or {}
+    stored_hash = doc.get("token_hash", "")
+    if not stored_hash or not hmac.compare_digest(_hash_token(token), stored_hash):
+        return None
+    if int(doc.get("expires_at", 0)) <= int(time.time()):
+        return None
+    return doc
+
+
+def _delete_session():
+    """Invalidate the active session (sign-out)."""
+    try:
+        _session_doc_ref().delete()
+    except Exception as exc:
+        logging.warning("Session delete failed: %s", exc)
+
+
+def _login_guard(ip: str):
+    """Return a 429 error tuple if `ip` is currently locked out, else None."""
+    rec = _login_fails.get(ip)
+    if rec and rec["count"] >= LOGIN_MAX_FAILS and time.time() < rec["until"]:
+        retry = int(rec["until"] - time.time())
+        return _error_response(
+            f"Too many failed sign-in attempts. Try again in {retry}s.", 429
+        )
+    return None
+
+
+def _record_login_fail(ip: str):
+    rec = _login_fails.get(ip) or {"count": 0, "until": 0.0}
+    # Reset the counter once a prior lockout window has fully elapsed.
+    if rec["count"] >= LOGIN_MAX_FAILS and time.time() >= rec["until"]:
+        rec = {"count": 0, "until": 0.0}
+    rec["count"] += 1
+    if rec["count"] >= LOGIN_MAX_FAILS:
+        rec["until"] = time.time() + LOGIN_LOCKOUT_SECONDS
+    _login_fails[ip] = rec
+
+
+def _clear_login_fails(ip: str):
+    _login_fails.pop(ip, None)
+
+
+def _authorize(request, requires_write=False):
+    """Authorize a request via EITHER a browser session token OR an API key.
+
+    - If an X-Session-Token header is present, it is the sole authority: valid
+      -> full (write-enabled) access; invalid/expired -> 401 (no fall-through,
+      so the UI drops straight to the login modal).
+    - Otherwise fall back to X-API-Key / Bearer auth for programmatic clients.
+    """
+    token = request.headers.get("X-Session-Token", "").strip()
+    if token:
+        if _validate_session_token(token) is None:
+            return _error_response("Session expired or invalid. Please sign in again.", 401)
+        return None  # authenticated admin session -> writes allowed
+    return _authenticate(request, requires_write=requires_write)
 
 
 # Actions that mutate state (or invalidate the read cache). Read-only
@@ -866,6 +1052,40 @@ def _handle_write(action, request, request_start):
     )
 
 
+def _handle_login(request, request_start):
+    """Verify credentials and mint a session token. Unauthenticated endpoint."""
+    ip = _client_ip(request)
+    guard = _login_guard(ip)
+    if guard is not None:
+        return guard
+    try:
+        body = request.get_json(silent=True) or {}
+    except Exception:
+        body = {}
+    username = str(body.get("username", "")).strip()
+    password = str(body.get("password", ""))
+    if not username or not password:
+        return _error_response("Username and password are required.", 400)
+
+    if not _verify_credentials(username, password):
+        _record_login_fail(ip)
+        elapsed = time.time() - request_start
+        logging.warning(f"action=login user={username!r} auth=FAILED ip={ip} time={elapsed:.4f}s")
+        # Deliberately generic — never reveal whether the username exists.
+        return _error_response("Invalid username or password.", 401)
+
+    _clear_login_fails(ip)
+    session = _create_session(username, ip)
+    elapsed = time.time() - request_start
+    logging.info(f"action=login user={username!r} auth=OK ip={ip} time={elapsed:.4f}s")
+    return _cors_response({
+        "status": "ok",
+        "token": session["token"],
+        "username": session["username"],
+        "expires_at": session["expires_at"],
+    })
+
+
 # ---------------------------------------------------------------------------
 # Entrypoint
 # ---------------------------------------------------------------------------
@@ -911,9 +1131,32 @@ def api_handler(request):
             "cache_ttl": _cache["ttl"],
         })
 
-    # Authenticate all other endpoints. Write actions require a key
-    # NOT in the read-only allowlist; everything else accepts either.
-    auth_error = _authenticate(request, requires_write=(action in _WRITE_ACTIONS))
+    # ---- login (unauthenticated — mints a session token) ----
+    if action == "login":
+        if request.method != "POST":
+            return _error_response("action=login requires POST", 405)
+        return _handle_login(request, request_start)
+
+    # ---- logout / session (authenticated by session token only) ----
+    if action in ("logout", "session"):
+        token = request.headers.get("X-Session-Token", "").strip()
+        sess = _validate_session_token(token) if token else None
+        if sess is None:
+            return _error_response("Not signed in.", 401)
+        if action == "logout":
+            _delete_session()
+            logging.info(f"action=logout user={sess.get('username')!r}")
+            return _cors_response({"status": "logged_out"})
+        return _cors_response({
+            "status": "ok",
+            "username": sess.get("username"),
+            "expires_at": sess.get("expires_at"),
+        })
+
+    # Authenticate all other endpoints. A valid session token grants full
+    # (write) access; otherwise fall back to API-key auth, where write actions
+    # require a key NOT in the read-only allowlist.
+    auth_error = _authorize(request, requires_write=(action in _WRITE_ACTIONS))
     if auth_error is not None:
         elapsed = time.time() - request_start
         logging.warning(f"action={action} auth=FAILED time={elapsed:.4f}s")
