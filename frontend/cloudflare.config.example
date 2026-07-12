@@ -1,0 +1,43 @@
+# ============================================================================
+# frontend/cloudflare.config — Cloudflare + GCS bucket settings
+# ----------------------------------------------------------------------------
+# Copy this file to `frontend/cloudflare.config` (gitignored) and fill in.
+# Consumed by frontend/cloudflare/deploy.sh, which provisions a domain-named
+# public GCS bucket and points the apex CNAME at it via Cloudflare.
+# ============================================================================
+
+# === Cloudflare ===
+# API token with these scopes (account: Info@solutionjet.net's Account):
+#   Zone:DNS:Edit on arboryx.ai
+# (Workers / Account / Page Rules scopes are NOT required for this deploy.)
+CLOUDFLARE_API_TOKEN=""
+
+# Zone ID of arboryx.ai (find it on the CF dashboard right sidebar, or via:
+#   curl -H "Authorization: Bearer $TOKEN" \
+#     "https://api.cloudflare.com/client/v4/zones?name=arboryx.ai")
+CLOUDFLARE_ZONE_ID=""
+CLOUDFLARE_ZONE_NAME="arboryx.ai"
+
+# Account ID — informational only; not needed by the deploy script.
+# Kept here so future Workers-based deploys can read it from the same file.
+CLOUDFLARE_ACCOUNT_ID=""
+
+# === GCP ===
+# Project that will own the bucket. The bucket itself must be named exactly
+# the domain we want to serve (CF CNAME → c.storage.googleapis.com routes by
+# Host header, which GCS matches against bucket name).
+GCP_PROJECT_ID="marketresearch-agents"
+GCS_BUCKET_NAME="arboryx.ai"
+GCS_BUCKET_LOCATION="US"        # multi-region; fine for a static site
+
+# Google account that owns the domain in Search Console. Used ONLY by the
+# one-time `gcloud storage buckets create gs://<domain>` command, which GCS
+# allows only for verified domain owners. Everything else (website config,
+# IAM, rsync, DNS) runs under whatever account is currently active (typically
+# the project's service account via ADC). Leave blank to skip the override
+# and use the active account everywhere.
+DOMAIN_OWNER_ACCOUNT=""
+
+# === Site ===
+SITE_INDEX="index.html"
+SITE_404="404.html"

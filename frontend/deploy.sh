@@ -8,7 +8,10 @@
 #
 # Modes:
 #   --local      (default) Just regenerate config.js in place.
-#   --gcs        Generate config.js + rsync to gs://BUCKET/PREFIX/.
+#   --gcs        Generate config.js + delegate to frontend/cloudflare/deploy.sh
+#                (the canonical CF+GCS deploy; this mode is a thin shim that
+#                 just passes --skip-verify --skip-dns to skip the one-time
+#                 setup stages and only re-sync the frontend tree).
 #   --firebase   Generate config.js + firebase deploy --only hosting:SITE.
 #
 # Flags:
@@ -196,33 +199,20 @@ case "$MODE" in
     ;;
 
   gcs)
-    header "--- Step 2: Deploy to GCS ---"
-    if [[ -z "$GCS_BUCKET" ]]; then
-      err "GCS_BUCKET not set in config"
+    header "--- Step 2: Delegate to frontend/cloudflare/deploy.sh ---"
+    CF_DEPLOY="$SCRIPT_DIR/cloudflare/deploy.sh"
+    if [[ ! -f "$CF_DEPLOY" ]]; then
+      err "Canonical deploy not found: $CF_DEPLOY"
+      err "The --gcs mode is a shim around it — keep them in the same repo."
       exit 1
     fi
-    DEST="gs://${GCS_BUCKET}/${GCS_FRONTEND_PREFIX}"
-    info "Destination: $DEST"
-
-    # Files we ship — exclude config sources, deploy script, and the
-    # gitignored config.config (only the generated config.js gets shipped).
-    EXCLUDES=(
-      -x '\.config$'
-      -x '\.config\.example$'
-      -x '^deploy\.sh$'
-    )
-
-    if [[ "$DRY_RUN" == true ]]; then
-      info "Would run: gsutil -m rsync -r -d ${EXCLUDES[*]} $SCRIPT_DIR $DEST"
-      info "Would set per-object public-read on uploaded objects."
-    else
-      info "Syncing..."
-      gsutil -m rsync -r -d "${EXCLUDES[@]}" "$SCRIPT_DIR" "$DEST"
-      info "Setting public-read ACL..."
-      gsutil -m acl ch -r -u AllUsers:R "$DEST" || warn "ACL pass had errors (may already be public)"
-      success "Uploaded to $DEST"
-      info "Public URL: https://storage.googleapis.com/${GCS_BUCKET}/${GCS_FRONTEND_PREFIX}index.html"
-    fi
+    # Bucket name + IAM + DNS are managed by cloudflare/deploy.sh against
+    # frontend/cloudflare.config (not arboryx_frontend.config). Skip the one-
+    # time stages (verify, DNS) and just re-sync the frontend tree.
+    CF_ARGS=(--skip-verify --skip-dns)
+    $DRY_RUN && CF_ARGS+=(--dry-run)
+    info "Running: bash $CF_DEPLOY ${CF_ARGS[*]}"
+    bash "$CF_DEPLOY" "${CF_ARGS[@]}"
     ;;
 
   firebase)

@@ -8,8 +8,13 @@ arboryx_admin_backend.config
 arboryx_admin_ui.config
 notes.txt
 frontend/arboryx_frontend.config
+frontend/cloudflare.config
 frontend/scripts/config.js
 # Rotation / config backups produced by dev-utils/rotate_key.sh — they
 # can carry live secrets and must never reach the index.
 *.bak
 *.bak.*
+# Claude Code session data + worktrees — hold copied secrets (service_account.json,
+# *_backend.config/_ui.config) and must never be staged.
+.claude/
+.claude/worktrees/

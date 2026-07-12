@@ -7,6 +7,18 @@
   <link rel="icon" type="image/x-icon" href="assets/favicon.ico">
   <title>New Growth · Arboryx</title>
   <meta name="description" content="Recent market findings across robotics, crypto, AI, space &amp; defense, power &amp; energy, and strategic minerals." />
+
+  <!-- Open Graph (X / LinkedIn link cards) -->
+  <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="Arboryx" />
+  <meta property="og:title" content="New Growth · Arboryx" />
+  <meta property="og:description" content="Daily catalysts across robotics, crypto, AI, space &amp; defense, power &amp; energy, and strategic minerals." />
+  <meta property="og:image" content="https://arboryx.ai/assets/main-logo.png" />
+  <meta property="og:url" content="https://arboryx.ai/new_growth.html" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:image" content="https://arboryx.ai/assets/main-logo.png" />
+  <meta name="twitter:title" content="New Growth · Arboryx" />
+  <meta name="twitter:description" content="Daily catalysts across deep-tech sectors." />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link rel="stylesheet"
@@ -1020,6 +1032,11 @@
         <a class="copyright-home" href="/" aria-label="Home">
           © <span data-dynamic-year>2026</span> Arboryx.ai · All rights reserved
         </a>
+        <nav class="legal-links" aria-label="Legal">
+          <a href="privacy_policy.html">Privacy</a>
+          <span aria-hidden="true">·</span>
+          <a href="terms_of_service.html">Terms</a>
+        </nav>
       </div>
     </footer>
   </div>
@@ -1056,6 +1073,7 @@
       COLUMN_CONFIG: {
         entry_id:   { skip: true },
         source_url: { skip: true },
+        tooltip:    { skip: true },  // rendered explicitly as tooltipRow above the field grid
       },
     };
 

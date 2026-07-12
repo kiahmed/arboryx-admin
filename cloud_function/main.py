@@ -451,6 +451,8 @@ def _apply_update(findings, original_entry_id, patch):
 # cover production GCS/Firebase hosting + local dev; extend via env var
 # in cloud_function/deploy.sh without code changes.
 _DEFAULT_ALLOWED_ORIGINS = (
+    "https://arboryx.ai,"
+    "https://www.arboryx.ai,"
     "https://storage.googleapis.com,"
     "https://arboryx-ai.web.app,"
     "https://arboryx-ai.firebaseapp.com,"

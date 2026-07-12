@@ -488,6 +488,31 @@
 }
 .copyright-home:hover { color: var(--text); border-color: var(--border2); }
 
+.legal-links {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--muted);
+  letter-spacing: 0.05em;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.legal-links a {
+  color: inherit;
+  text-decoration: none;
+  border: 1px solid transparent;
+  padding: 5px 9px;
+  border-radius: var(--r-sm);
+  line-height: 1.5;
+  transition: color .15s, border-color .15s;
+}
+.legal-links a:hover { color: var(--text); border-color: var(--border2); }
+
+
+/* Legal pages release the no-scroll viewport lock via inline <style> in
+   privacy_policy.html / terms_of_service.html (lives there so it overrides
+   tokens.css cleanly without :has() or cache-state coupling). */
+
 
 /* --- MOBILE — keep no-scroll, expand center console horizontally --- */
 @media (max-width: 768px) {
