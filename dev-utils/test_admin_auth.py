@@ -70,6 +70,7 @@ def check(label, cond, detail=""):
 
 
 ORIGIN = {"Origin": "https://storage.googleapis.com"}
+TEST_IP = "203.0.113.7"  # matches FakeRequest.remote_addr (no XFF => _client_ip uses it)
 
 
 def main_test():
@@ -81,7 +82,7 @@ def main_test():
 
     # Clean slate.
     main._delete_session()
-    main._login_fails.clear()
+    main._clear_login_fails(TEST_IP)
 
     # 1. Unauthenticated data request is rejected.
     s, d, _ = call(FakeRequest("findings", headers=ORIGIN))
@@ -162,7 +163,7 @@ def main_test():
     main._delete_session()
 
     # 15. Lockout after LOGIN_MAX_FAILS bad attempts.
-    main._login_fails.clear()
+    main._clear_login_fails(TEST_IP)
     lock_hit = False
     for i in range(main.LOGIN_MAX_FAILS + 1):
         s, d, _ = call(FakeRequest("login", method="POST", headers=ORIGIN, json_body={"username": username, "password": "bad"}))
@@ -170,7 +171,7 @@ def main_test():
             lock_hit = True
             break
     check("IP locked out after repeated failures -> 429", lock_hit, f"never got 429")
-    main._login_fails.clear()
+    main._clear_login_fails(TEST_IP)
 
     # 16. Backward compat: a valid API key still works with no session token.
     keys = list(main._WRITE_KEYS)
@@ -180,9 +181,38 @@ def main_test():
     else:
         print("  (skip) no write keys configured to test key back-compat")
 
+    # 17. FAIL CLOSED: if no keys are loaded, key-auth is DENIED (503), not open.
+    saved = (main._VALID_KEYS, main._WRITE_KEYS, main._READ_ONLY_KEYS, main._ALLOW_UNAUTHENTICATED)
+    try:
+        main._VALID_KEYS = set(); main._WRITE_KEYS = set(); main._READ_ONLY_KEYS = set()
+        main._ALLOW_UNAUTHENTICATED = False
+        s, d, _ = call(FakeRequest("findings", headers=ORIGIN))
+        check("empty key set fails CLOSED (no token) -> 503", s == 503, f"got {s}")
+        # A valid session must STILL work even when key-auth is down.
+        s2, d2, _ = call(FakeRequest("login", method="POST", headers=ORIGIN, json_body={"username": username, "password": password}))
+        tok = d2.get("token", "")
+        s3, _, _ = call(FakeRequest("findings", headers={**ORIGIN, "X-Session-Token": tok}, args={"limit": "1"}))
+        check("session login still works while key-auth is down -> 200", s3 == 200, f"got {s3}")
+        main._delete_session()
+    finally:
+        main._VALID_KEYS, main._WRITE_KEYS, main._READ_ONLY_KEYS, main._ALLOW_UNAUTHENTICATED = saved
+
+    # 18. X-Forwarded-For spoofing cannot forge the client IP (reads from right).
+    r = FakeRequest("login", headers={**ORIGIN, "X-Forwarded-For": "1.2.3.4, 203.0.113.9"})
+    check("XFF leftmost is ignored; trusted trailing hop wins",
+          main._client_ip(r) == "203.0.113.9", main._client_ip(r))
+    r2 = FakeRequest("login", headers={**ORIGIN, "X-Forwarded-For": "9.9.9.9"})  # spoof only
+    check("single spoofed XFF hop is treated as the client (still not leftmost of a chain)",
+          main._client_ip(r2) == "9.9.9.9", main._client_ip(r2))
+
+    # 19. Login/session responses carry Cache-Control: no-store.
+    s, d, h = call(FakeRequest("login", method="POST", headers=ORIGIN, json_body={"username": username, "password": password}))
+    check("login response is no-store", h.get("Cache-Control") == "no-store", h.get("Cache-Control"))
+    main._delete_session()
+
     # Cleanup.
     main._delete_session()
-    main._login_fails.clear()
+    main._clear_login_fails(TEST_IP)
 
 
 if __name__ == "__main__":

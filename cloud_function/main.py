@@ -144,13 +144,30 @@ ADMIN_USERS_SECRET = os.environ.get("ADMIN_USERS_SECRET", "arboryx-admin-users")
 SESSION_COLLECTION = os.environ.get("SESSION_COLLECTION", "admin_sessions")
 SESSION_DOC_ID = os.environ.get("SESSION_DOC_ID", "current")
 SESSION_TTL_SECONDS = int(os.environ.get("SESSION_TTL_SECONDS", "43200"))  # 12h
-# Brute-force dampener: after LOGIN_MAX_FAILS bad passwords from one IP, lock
-# that IP out for LOGIN_LOCKOUT_SECONDS. Per-instance/in-memory — the real
-# protection is a high-entropy generated password + the global rate limiter;
-# this just makes online guessing pointless.
+# Brute-force dampener: after LOGIN_MAX_FAILS bad passwords from one client,
+# lock it out for LOGIN_LOCKOUT_SECONDS. Backed by Firestore (collection
+# LOGIN_FAILS_COLLECTION) so the limit holds ACROSS function instances — an
+# in-memory counter would reset on cold start and multiply per warm instance.
 LOGIN_MAX_FAILS = int(os.environ.get("LOGIN_MAX_FAILS", "5"))
 LOGIN_LOCKOUT_SECONDS = int(os.environ.get("LOGIN_LOCKOUT_SECONDS", "300"))
-_login_fails: dict = {}  # ip -> {"count": int, "until": epoch}
+LOGIN_FAILS_COLLECTION = os.environ.get("LOGIN_FAILS_COLLECTION", "admin_login_fails")
+
+# Admin user map is read from Secret Manager on sign-in. Cache it in-process so
+# a burst of login attempts can't hammer Secret Manager (cost/quota DoS). A
+# password change via manage_admin_users.sh takes effect within this TTL.
+ADMIN_USERS_CACHE_TTL = int(os.environ.get("ADMIN_USERS_CACHE_TTL", "60"))
+_admin_users_cache = {"data": None, "ts": 0.0}
+
+# FAIL-CLOSED: if no API keys could be loaded (Secret Manager/IAM failure, or
+# none configured), key-based auth is DENIED rather than silently opened. Set
+# ALLOW_UNAUTHENTICATED=true ONLY for local dev to restore open access.
+_ALLOW_UNAUTHENTICATED = os.environ.get("ALLOW_UNAUTHENTICATED", "").strip().lower() in ("1", "true", "yes")
+
+# Number of trailing X-Forwarded-For hops added by trusted infrastructure
+# (Google Front End = 1 for a bare Cloud Function; +1 per extra LB you add).
+# The client can PREPEND to XFF but cannot forge these trailing hops, so the
+# real client IP is read from the right — never the spoofable leftmost value.
+TRUSTED_PROXY_COUNT = int(os.environ.get("TRUSTED_PROXY_COUNT", "1"))
 
 _secret_client = None
 
@@ -518,7 +535,7 @@ def _resolve_origin(request_origin: str) -> str:
     return request_origin if request_origin in _ALLOWED_ORIGINS else ""
 
 
-def _cors_response(data, status=200):
+def _cors_response(data, status=200, no_store=False):
     """Wrap response with CORS headers.
 
     Reads the per-request validated Origin from the _request_origin
@@ -540,6 +557,10 @@ def _cors_response(data, status=200):
         "Vary": "Origin, Accept-Encoding",
         "Content-Type": "application/json",
     }
+    if no_store:
+        # Token-bearing responses (login/session) must never be cached by any
+        # intermediary or the browser disk cache.
+        headers["Cache-Control"] = "no-store"
     if origin:
         headers["Access-Control-Allow-Origin"] = origin
     # Surface the cached GCS object generation on every JSON response so
@@ -626,11 +647,21 @@ _rate_buckets: dict = {}  # ip -> {"tokens": float, "ts": float}
 
 
 def _client_ip(request) -> str:
-    """Extract the client IP, preferring X-Forwarded-For (Cloud Run/LB chain)."""
+    """Extract the client IP that trusted infrastructure actually observed.
+
+    X-Forwarded-For is `client, hop1, ..., hopN`. A caller can PREPEND arbitrary
+    values (spoofing the leftmost entry) but cannot forge the trailing hops that
+    Google's front end / your load balancer append. So we read from the RIGHT:
+    the real client sits TRUSTED_PROXY_COUNT entries from the end. Using the
+    leftmost value here would let an attacker rotate a fake IP per request and
+    sail past the rate limiter and the login lockout.
+    """
     xff = request.headers.get("X-Forwarded-For", "")
     if xff:
-        # XFF is a comma-list of upstream hops; the first is the original client.
-        return xff.split(",")[0].strip()
+        parts = [p.strip() for p in xff.split(",") if p.strip()]
+        if parts:
+            idx = len(parts) - TRUSTED_PROXY_COUNT
+            return parts[idx] if 0 <= idx < len(parts) else parts[0]
     return request.remote_addr or "unknown"
 
 
@@ -669,8 +700,15 @@ def _authenticate(request, requires_write=False):
     When requires_write=True, read-only keys are rejected with 403.
     """
     if not _VALID_KEYS:
-        # No keys configured — auth is disabled (open access)
-        return None
+        # FAIL CLOSED. An empty key set means Secret Manager/IAM failed to load
+        # keys (or none are configured) — deny rather than silently allowing
+        # everyone to read AND write. Admins can still sign in via ?action=login
+        # (that path doesn't depend on _VALID_KEYS). Local dev can opt back into
+        # open access with ALLOW_UNAUTHENTICATED=true.
+        if _ALLOW_UNAUTHENTICATED:
+            return None
+        logging.error("auth DENIED: no API keys loaded (Secret Manager/IAM issue?)")
+        return _error_response("Authentication is unavailable. Access denied.", 503)
 
     # Check X-API-Key header first, then Authorization: Bearer
     key = request.headers.get("X-API-Key", "").strip()
@@ -702,23 +740,33 @@ def _hash_token(token: str) -> str:
 def _fetch_admin_users() -> dict:
     """Return {username: password} from Secret Manager, or {} on any error.
 
-    Reads only the single LATEST enabled version (unlike API keys, there is no
-    multi-version overlap for the user map). Fetched fresh per login — logins
-    are rare, so a rotation takes effect immediately with no cache to bust.
+    Cached in-process for ADMIN_USERS_CACHE_TTL seconds so a burst of login
+    attempts can't hammer Secret Manager (cost/quota DoS). Reads only the single
+    LATEST enabled version. On a transient fetch error we serve the last known
+    map (if any) rather than locking everyone out.
     """
+    now = time.time()
+    cache = _admin_users_cache
+    if cache["data"] is not None and (now - cache["ts"]) < ADMIN_USERS_CACHE_TTL:
+        return cache["data"]
+
     client = _get_secret_client()
     if client is None:
-        return {}
+        return cache["data"] if cache["data"] is not None else {}
     name = f"projects/{PROJECT_ID}/secrets/{ADMIN_USERS_SECRET}/versions/latest"
     try:
         payload = client.access_secret_version(request={"name": name})
         raw = payload.payload.data.decode("utf-8").strip()
         data = json.loads(raw) if raw else {}
         # Coerce to str:str; ignore malformed entries.
-        return {str(k): str(v) for k, v in data.items() if k and v}
+        users = {str(k): str(v) for k, v in data.items() if k and v}
+        cache["data"] = users
+        cache["ts"] = now
+        return users
     except Exception as exc:
         logging.warning("Failed to load admin users secret: %s", exc)
-        return {}
+        # Serve stale on error to avoid a self-inflicted lockout during a blip.
+        return cache["data"] if cache["data"] is not None else {}
 
 
 def _verify_credentials(username: str, password: str) -> bool:
@@ -792,30 +840,56 @@ def _delete_session():
         logging.warning("Session delete failed: %s", exc)
 
 
+def _login_fail_ref(ip: str):
+    """Firestore ref for a client's failure counter (doc id = hash of the IP)."""
+    doc_id = hashlib.sha256(ip.encode("utf-8")).hexdigest()
+    return _get_firestore_client().collection(LOGIN_FAILS_COLLECTION).document(doc_id)
+
+
 def _login_guard(ip: str):
-    """Return a 429 error tuple if `ip` is currently locked out, else None."""
-    rec = _login_fails.get(ip)
-    if rec and rec["count"] >= LOGIN_MAX_FAILS and time.time() < rec["until"]:
-        retry = int(rec["until"] - time.time())
-        return _error_response(
-            f"Too many failed sign-in attempts. Try again in {retry}s.", 429
-        )
+    """Return a 429 error tuple if this client is currently locked out.
+
+    Durable across function instances (Firestore-backed). Fails OPEN on a
+    Firestore read error so an outage can't lock the operator out entirely —
+    the in-memory request rate limiter and password entropy remain in force.
+    """
+    try:
+        snap = _login_fail_ref(ip).get()
+    except Exception as exc:
+        logging.warning("login guard read failed: %s", exc)
+        return None
+    if not snap.exists:
+        return None
+    rec = snap.to_dict() or {}
+    if int(rec.get("count", 0)) >= LOGIN_MAX_FAILS and time.time() < float(rec.get("until", 0)):
+        retry = int(float(rec["until"]) - time.time())
+        return _error_response(f"Too many failed sign-in attempts. Try again in {retry}s.", 429)
     return None
 
 
 def _record_login_fail(ip: str):
-    rec = _login_fails.get(ip) or {"count": 0, "until": 0.0}
-    # Reset the counter once a prior lockout window has fully elapsed.
-    if rec["count"] >= LOGIN_MAX_FAILS and time.time() >= rec["until"]:
-        rec = {"count": 0, "until": 0.0}
-    rec["count"] += 1
-    if rec["count"] >= LOGIN_MAX_FAILS:
-        rec["until"] = time.time() + LOGIN_LOCKOUT_SECONDS
-    _login_fails[ip] = rec
+    """Increment the durable per-client failure counter and arm the lockout."""
+    try:
+        ref = _login_fail_ref(ip)
+        snap = ref.get()
+        rec = (snap.to_dict() or {}) if snap.exists else {"count": 0, "until": 0.0}
+        # Reset the counter once a prior lockout window has fully elapsed.
+        if int(rec.get("count", 0)) >= LOGIN_MAX_FAILS and time.time() >= float(rec.get("until", 0)):
+            rec = {"count": 0, "until": 0.0}
+        rec["count"] = int(rec.get("count", 0)) + 1
+        if rec["count"] >= LOGIN_MAX_FAILS:
+            rec["until"] = time.time() + LOGIN_LOCKOUT_SECONDS
+        ref.set(rec)
+    except Exception as exc:
+        logging.warning("login fail record failed: %s", exc)
 
 
 def _clear_login_fails(ip: str):
-    _login_fails.pop(ip, None)
+    """Clear the failure counter on a successful sign-in."""
+    try:
+        _login_fail_ref(ip).delete()
+    except Exception as exc:
+        logging.warning("login fail clear failed: %s", exc)
 
 
 def _authorize(request, requires_write=False):
@@ -1083,7 +1157,7 @@ def _handle_login(request, request_start):
         "token": session["token"],
         "username": session["username"],
         "expires_at": session["expires_at"],
-    })
+    }, no_store=True)
 
 
 # ---------------------------------------------------------------------------
@@ -1146,12 +1220,12 @@ def api_handler(request):
         if action == "logout":
             _delete_session()
             logging.info(f"action=logout user={sess.get('username')!r}")
-            return _cors_response({"status": "logged_out"})
+            return _cors_response({"status": "logged_out"}, no_store=True)
         return _cors_response({
             "status": "ok",
             "username": sess.get("username"),
             "expires_at": sess.get("expires_at"),
-        })
+        }, no_store=True)
 
     # Authenticate all other endpoints. A valid session token grants full
     # (write) access; otherwise fall back to API-key auth, where write actions
