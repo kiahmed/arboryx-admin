@@ -241,7 +241,7 @@
       position: relative;
       flex: 1;
       min-width: 160px;
-      max-width: 400px;
+      max-width: 340px;
     }
 
     .search-wrap input {
@@ -1005,10 +1005,137 @@
     .modal-btn.primary { border-color: #4a8fd1; color: #cfe3ff; }
     .modal-btn.primary:hover { background: #0d1a2a; }
     .modal-btn:disabled { opacity: .5; cursor: wait; }
+
+    /* -- AUTH: sign-out ("exit door") button, next to Refresh -- */
+    .exit-btn {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: rgba(240, 72, 96, .07);
+      border: 1px solid rgba(240, 72, 96, .28);
+      border-radius: 6px;
+      width: 30px;
+      height: 27px;
+      color: var(--danger);
+      cursor: pointer;
+      transition: all .15s;
+      flex-shrink: 0;
+      padding: 0;
+    }
+    .exit-btn:hover { background: rgba(240, 72, 96, .16); border-color: var(--danger); }
+    .exit-btn svg { display: block; }
+
+    /* -- AUTH: login gate -- */
+    .login-overlay {
+      position: fixed;
+      inset: 0;
+      background: var(--bg);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 2000;
+      padding: 20px;
+    }
+    .login-overlay.hidden { display: none; }
+    .login-box {
+      background: var(--surface);
+      border: 1px solid var(--border2);
+      border-radius: 10px;
+      width: min(360px, 100%);
+      padding: 28px 26px;
+      box-shadow: 0 20px 60px rgba(0,0,0,.5);
+    }
+    .login-logo {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 20px;
+    }
+    .login-logo .logo-text { font-size: 14px; }
+    .login-title {
+      font-family: 'Syne', sans-serif;
+      font-weight: 700;
+      font-size: 16px;
+      color: #fff;
+      margin-bottom: 4px;
+    }
+    .login-sub {
+      font-size: 10px;
+      color: var(--muted);
+      letter-spacing: .1em;
+      text-transform: uppercase;
+      margin-bottom: 20px;
+    }
+    .login-field { display: flex; flex-direction: column; gap: 5px; margin-bottom: 14px; }
+    .login-field label {
+      font-size: 10.5px;
+      color: var(--muted);
+      letter-spacing: .04em;
+      text-transform: uppercase;
+    }
+    .login-field input {
+      background: var(--surface2);
+      border: 1px solid var(--border2);
+      border-radius: 6px;
+      padding: 9px 11px;
+      color: var(--text);
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 12px;
+      outline: none;
+      transition: border-color .2s, box-shadow .2s;
+    }
+    .login-field input:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 2px rgba(240, 184, 64, .1);
+    }
+    .login-btn {
+      width: 100%;
+      margin-top: 6px;
+      background: rgba(240, 184, 64, .12);
+      border: 1px solid rgba(240, 184, 64, .4);
+      border-radius: 6px;
+      padding: 10px;
+      color: var(--accent);
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 12px;
+      letter-spacing: .05em;
+      cursor: pointer;
+      transition: all .15s;
+    }
+    .login-btn:hover { background: rgba(240, 184, 64, .2); border-color: var(--accent); }
+    .login-btn:disabled { opacity: .5; cursor: wait; }
+    .login-err {
+      color: var(--danger);
+      font-size: 11px;
+      min-height: 15px;
+      margin-top: 12px;
+      text-align: center;
+    }
   </style>
 </head>
 
 <body>
+  <!-- Login gate — shown until a valid session exists. Sign-in only; no sign-up. -->
+  <div class="login-overlay" id="loginOverlay">
+    <div class="login-box">
+      <div class="login-title">Sign in</div>
+      <div class="login-sub">Arboryx Admin</div>
+      <form id="loginForm" autocomplete="on">
+        <div class="login-field">
+          <label for="loginUser">Username</label>
+          <input type="text" id="loginUser" name="username" autocomplete="username"
+                 autocapitalize="none" spellcheck="false" required>
+        </div>
+        <div class="login-field">
+          <label for="loginPass">Password</label>
+          <input type="password" id="loginPass" name="password" autocomplete="current-password" required>
+        </div>
+        <button type="submit" class="login-btn" id="loginBtn">Sign In</button>
+        <div class="login-err" id="loginErr"></div>
+      </form>
+    </div>
+  </div>
+
   <div id="app">
 
     <header>
@@ -1068,6 +1195,16 @@
         <!-- Refresh -->
         <button class="refresh-btn" id="refreshBtn">
           <span class="icon" id="refreshIcon">&#8635;</span> Refresh
+        </button>
+
+        <!-- Sign out (exit door) -->
+        <button class="exit-btn" id="signOutBtn" title="Sign out" aria-label="Sign out">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+               stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
+            <polyline points="16 17 21 12 16 7"/>
+            <line x1="21" y1="12" x2="9" y2="12"/>
+          </svg>
         </button>
       </div>
 
@@ -1184,9 +1321,28 @@
 
     // -- API CONFIG --
     const API_URL = '__ARBORYX_ADMIN_API_URL__';
-    const API_KEY = '__ARBORYX_ADMIN_API_KEY__';
     const CHUNK_SIZE = 100;
     const SESSION_KEY = 'arboryx_admin_v1';
+
+    // -- AUTH --
+    // No API key is embedded in this page. The operator signs in; the backend
+    // returns an opaque session token which we send as X-Session-Token on every
+    // request. The token lives in localStorage so a reload stays signed in;
+    // the server enforces a single active session + expiry regardless.
+    const TOKEN_KEY = 'arboryx_admin_token';
+    let AUTH_TOKEN = localStorage.getItem(TOKEN_KEY) || null;
+    let _appBooted = false;
+
+    function setToken(t) {
+      AUTH_TOKEN = t || null;
+      if (t) localStorage.setItem(TOKEN_KEY, t);
+      else localStorage.removeItem(TOKEN_KEY);
+    }
+    function authHeaders(extra) {
+      const h = extra ? { ...extra } : {};
+      if (AUTH_TOKEN) h['X-Session-Token'] = AUTH_TOKEN;
+      return h;
+    }
 
     // -- DISPLAY CONFIG --
     const CONFIG = {
@@ -1369,9 +1525,10 @@
     async function apiFetch(params) {
       const qs = new URLSearchParams(params).toString();
       const resp = await fetch(`${API_URL}?${qs}`, {
-        headers: { 'X-API-Key': API_KEY },
+        headers: authHeaders(),
         cache: 'no-store',
       });
+      if (resp.status === 401) { handleSessionExpired(); throw new Error('Session expired'); }
       if (!resp.ok) throw new Error(`API ${resp.status} ${resp.statusText}`);
       return resp.json();
     }
@@ -1382,10 +1539,11 @@
     // skip the full stats payload when the master log hasn't moved.
     async function apiProbe(params, etag) {
       const qs = new URLSearchParams(params).toString();
-      const headers = { 'X-API-Key': API_KEY };
+      const headers = authHeaders();
       if (etag) headers['If-None-Match'] = etag;
       const resp = await fetch(`${API_URL}?${qs}`, { headers, cache: 'no-store' });
       if (resp.status === 304) return { notModified: true, etag };
+      if (resp.status === 401) { handleSessionExpired(); throw new Error('Session expired'); }
       if (!resp.ok) throw new Error(`API ${resp.status} ${resp.statusText}`);
       return { notModified: false, etag: resp.headers.get('ETag'), body: await resp.json() };
     }
@@ -1418,12 +1576,10 @@
     async function apiWrite(action, body) {
       const resp = await fetch(`${API_URL}?action=${encodeURIComponent(action)}`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-API-Key': API_KEY,
-        },
+        headers: authHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify(body),
       });
+      if (resp.status === 401) { handleSessionExpired(); const e = new Error('Session expired'); e.status = 401; throw e; }
       let payload = null;
       try { payload = await resp.json(); } catch {}
       if (!resp.ok) {
@@ -2158,21 +2314,100 @@
       state.perPage = +e.target.value; state.page = 1; render();
     });
 
-    // -- INIT --
-    syncSearchState();
-    const cached = loadFromSession();
-    if (cached && cached.entries && cached.entries.length > 0) {
-      processData(cached.entries);
-      _serverGeneration = cached.dataGeneration ?? null;
-      updateFeed('cached', cached.entries.length);
-      // Always check for upstream master-log changes — refreshDelta() will
-      // detect a generation mismatch and force a clean reinitialLoad if the
-      // pipeline ran a dedup, delete, or reorder that lowered/changed totals.
-      refreshDelta();
-    } else {
-      renderLoading();
-      initialLoad();
+    // ================================================================
+    //  AUTH: login gate (sign-in only — there is no sign-up path)
+    // ================================================================
+    function showLogin(msg) {
+      document.getElementById('loginOverlay').classList.remove('hidden');
+      document.getElementById('loginErr').textContent = msg || '';
+      const u = document.getElementById('loginUser');
+      const p = document.getElementById('loginPass');
+      p.value = '';
+      if (!u.value) u.focus(); else p.focus();
     }
+    function hideLogin() {
+      document.getElementById('loginOverlay').classList.add('hidden');
+    }
+    // Called when any API call returns 401 (expired token, or the single
+    // active session was taken over by a sign-in elsewhere).
+    function handleSessionExpired() {
+      setToken(null);
+      try { sessionStorage.removeItem(SESSION_KEY); } catch {}
+      try { setRefreshEnabled(false); } catch {}
+      showLogin('Your session ended. Please sign in again.');
+    }
+    async function doLogin(username, password) {
+      const resp = await fetch(`${API_URL}?action=login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, password }),
+      });
+      let data = {};
+      try { data = await resp.json(); } catch {}
+      if (!resp.ok) throw new Error(data.error || `Sign-in failed (${resp.status})`);
+      setToken(data.token);
+      return data;
+    }
+    async function doLogout() {
+      try {
+        await fetch(`${API_URL}?action=logout`, { method: 'POST', headers: authHeaders() });
+      } catch {}
+      setToken(null);
+      try { sessionStorage.removeItem(SESSION_KEY); } catch {}
+      location.reload();
+    }
+
+    document.getElementById('loginForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const btn = document.getElementById('loginBtn');
+      const err = document.getElementById('loginErr');
+      const username = document.getElementById('loginUser').value.trim();
+      const password = document.getElementById('loginPass').value;
+      if (!username || !password) { err.textContent = 'Enter username and password.'; return; }
+      btn.disabled = true; btn.textContent = 'Signing in…'; err.textContent = '';
+      try {
+        await doLogin(username, password);
+        // Reload so the app boots through one code path with the new token.
+        location.reload();
+      } catch (ex) {
+        err.textContent = ex.message || 'Sign-in failed.';
+        btn.disabled = false; btn.textContent = 'Sign In';
+        document.getElementById('loginPass').focus();
+      }
+    });
+
+    document.getElementById('signOutBtn').addEventListener('click', () => { doLogout(); });
+
+    function bootApp() {
+      _appBooted = true;
+      hideLogin();
+      syncSearchState();
+      const cached = loadFromSession();
+      if (cached && cached.entries && cached.entries.length > 0) {
+        processData(cached.entries);
+        _serverGeneration = cached.dataGeneration ?? null;
+        updateFeed('cached', cached.entries.length);
+        // Always check for upstream master-log changes — refreshDelta() will
+        // detect a generation mismatch and force a clean reinitialLoad if the
+        // pipeline ran a dedup, delete, or reorder that lowered/changed totals.
+        refreshDelta();
+      } else {
+        renderLoading();
+        initialLoad();
+      }
+    }
+
+    // -- INIT: don't load anything until we have a valid session --
+    (async function initAuthGate() {
+      if (AUTH_TOKEN) {
+        try {
+          const r = await fetch(`${API_URL}?action=session`, { headers: authHeaders(), cache: 'no-store' });
+          if (r.ok) { bootApp(); return; }
+        } catch { /* network error — fall through to login */ }
+        setToken(null);  // stored token was stale/invalid
+      }
+      showLogin();
+    })();
   </script>
 </body>
 

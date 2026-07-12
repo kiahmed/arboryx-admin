@@ -5,4 +5,6 @@ STORAGE_BUCKET="your bucket name"
 # === UI DEPLOYMENT ===
 UI_FILE="your ui file name"
 API_URL="your-api-url-here"
-API_KEY="your-api-key-here"
+# NOTE: The admin UI no longer embeds an API key — operators sign in for a
+# session token (see dev-utils/manage_admin_users.sh). API_KEY is no longer
+# injected at deploy time and is safe to leave unset.
