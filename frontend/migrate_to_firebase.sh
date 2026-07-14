@@ -46,7 +46,7 @@ CONFIG_FILE="$SCRIPT_DIR/arboryx_frontend.config"
 [[ -f "$CONFIG_FILE" ]] || { err "Copy arboryx_frontend.config.example → arboryx_frontend.config and fill it in."; exit 1; }
 # shellcheck disable=SC1090
 source "$CONFIG_FILE"
-: "${FIREBASE_PROJECT:=marketresearch-agents}"
+: "${FIREBASE_PROJECT:?FIREBASE_PROJECT not set in arboryx_frontend.config}"
 : "${FIREBASE_SITE:=arboryx-ai}"
 APEX="arboryx.ai"
 
