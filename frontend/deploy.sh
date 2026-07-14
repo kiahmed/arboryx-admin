@@ -234,6 +234,17 @@ case "$MODE" in
     info "Project : $FIREBASE_PROJECT"
     info "Site    : $FIREBASE_SITE"
 
+    # Ensure the hosting site exists (first run creates it; idempotent after).
+    if [[ "$DRY_RUN" == true ]]; then
+      info "Would ensure hosting site '$FIREBASE_SITE' exists (create if missing)."
+    elif firebase hosting:sites:list --project "$FIREBASE_PROJECT" 2>/dev/null | grep -qw "$FIREBASE_SITE"; then
+      info "Hosting site '$FIREBASE_SITE' already exists."
+    else
+      info "Creating hosting site '$FIREBASE_SITE'..."
+      firebase hosting:sites:create "$FIREBASE_SITE" --project "$FIREBASE_PROJECT"
+      firebase target:apply hosting "$FIREBASE_SITE" "$FIREBASE_SITE" --project "$FIREBASE_PROJECT" 2>/dev/null || true
+    fi
+
     if [[ "$DRY_RUN" == true ]]; then
       info "Would run: cd $SCRIPT_DIR && firebase deploy --only hosting:$FIREBASE_SITE --project $FIREBASE_PROJECT"
     else
