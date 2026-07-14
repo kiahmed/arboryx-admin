@@ -20,6 +20,13 @@
 #   bash frontend/migrate_to_firebase.sh            # do the migration
 #   bash frontend/migrate_to_firebase.sh --dry-run  # show what would happen
 #   (or:  make migrate  [DRY=1] )
+#
+# Identity: creating the hosting site + registering the custom domain both need
+# roles/firebasehosting.admin. Both steps honor GOOGLE_APPLICATION_CREDENTIALS,
+# so point it at a service-account key with that role to run the WHOLE migration
+# as that SA (one identity for both the firebase CLI and link_domain.py):
+#   GOOGLE_APPLICATION_CREDENTIALS=dev-utils/service_account.json make migrate
+# Otherwise it uses your interactive `firebase login` / `gcloud` account.
 # ============================================================================
 set -euo pipefail
 
