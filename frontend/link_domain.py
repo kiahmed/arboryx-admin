@@ -84,11 +84,30 @@ def _req(method: str, url: str, headers: dict, body: dict | None = None):
             return e.code, {"_raw": raw}
 
 
-def gcloud_token() -> str:
+def access_token() -> str:
+    """Mint a cloud-platform access token.
+
+    Prefers GOOGLE_APPLICATION_CREDENTIALS (a service-account key) when set, so
+    ONE env var drives BOTH this script AND the `firebase` CLI (which also reads
+    GOOGLE_APPLICATION_CREDENTIALS) — the two migration steps then run as the
+    same identity. Falls back to your interactive gcloud user credentials.
+    """
+    sa = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS", "").strip()
+    if sa:
+        if not os.path.isfile(sa):
+            die(f"GOOGLE_APPLICATION_CREDENTIALS points at a missing file: {sa}")
+        try:
+            from google.oauth2 import service_account
+            from google.auth.transport.requests import Request as _GReq
+            creds = service_account.Credentials.from_service_account_file(
+                sa, scopes=["https://www.googleapis.com/auth/cloud-platform"])
+            creds.refresh(_GReq())
+            return creds.token
+        except Exception as exc:
+            die(f"Failed to mint a token from GOOGLE_APPLICATION_CREDENTIALS ({sa}): {exc}")
     try:
         tok = subprocess.check_output(
-            ["gcloud", "auth", "print-access-token"], text=True
-        ).strip()
+            ["gcloud", "auth", "print-access-token"], text=True).strip()
     except Exception as exc:
         die(f"`gcloud auth print-access-token` failed ({exc}). Run `gcloud auth login`.")
     if not tok:
@@ -198,7 +217,7 @@ def main() -> int:
     domain = cfg.get("CLOUDFLARE_ZONE_NAME") or "arboryx.ai"   # apex == zone name
     cf_token = cfg.get("CLOUDFLARE_API_TOKEN") or die("CLOUDFLARE_API_TOKEN not set in cloudflare.config")
     parent = f"projects/{project}/sites/{site}"
-    token = gcloud_token()
+    token = access_token()
 
     # --check: just report and signal migrated/not-migrated via exit code.
     if args.check:
