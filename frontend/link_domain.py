@@ -185,22 +185,39 @@ def cf_zone_id(zone_name: str, token: str) -> str:
 def cf_upsert(zone_id: str, token: str, name: str, rtype: str, content: str, dry: bool):
     if rtype == "TXT":
         content = content.strip().strip('"')
-    existing = cf("GET", f"/zones/{zone_id}/dns_records?type={rtype}&name={name}",
-                  token).get("result", [])
-    if any(e.get("content") == content for e in existing):
+    # Fetch ALL records at this name (not just this type).
+    at = cf("GET", f"/zones/{zone_id}/dns_records?name={name}", token).get("result", [])
+
+    # DNS forbids a CNAME coexisting with other record types at the same name.
+    # The apex migration adds Firebase's A/AAAA/TXT, so first remove any stale
+    # CNAME here (e.g. the old GCS apex CNAME → c.storage.googleapis.com). If we
+    # were adding a CNAME, we'd instead clear any non-CNAME records.
+    conflicts = [e for e in at if (
+        (rtype in ("A", "AAAA", "TXT") and e.get("type") == "CNAME") or
+        (rtype == "CNAME" and e.get("type") != "CNAME"))]
+    for c in conflicts:
+        if dry:
+            print(f"   - would delete conflicting {c.get('type'):5} {name}  ({c.get('content')})")
+        else:
+            cf("DELETE", f"/zones/{zone_id}/dns_records/{c['id']}", token)
+            print(f"   - deleted conflicting {c.get('type'):5} {name}  ({c.get('content')})")
+
+    # Idempotent: skip if this exact record already exists. Otherwise CREATE —
+    # never PUT-replace, so multiple A records at the apex all get added.
+    # Normalize TXT quotes on BOTH sides — Cloudflare stores TXT wrapped in
+    # quotes while Firebase reports the raw value, so a naive compare would
+    # duplicate existing TXT (e.g. the Zoho SPF record — a fatal email break).
+    def _norm(v: str) -> str:
+        return v.strip().strip('"') if rtype == "TXT" else v
+    if any(e.get("type") == rtype and _norm(e.get("content", "")) == content for e in at):
         print(f"   = {rtype:5} {name} — already set")
         return
     payload = {"type": rtype, "name": name, "content": content, "ttl": 1, "proxied": False}
     if dry:
-        verb = "~ would update" if existing else "+ would create"
-        print(f"   {verb} {rtype:5} {name}  {content}")
+        print(f"   + would create {rtype:5} {name}  {content}")
         return
-    if existing:
-        cf("PUT", f"/zones/{zone_id}/dns_records/{existing[0]['id']}", token, payload)
-        print(f"   ~ {rtype:5} {name} — updated")
-    else:
-        cf("POST", f"/zones/{zone_id}/dns_records", token, payload)
-        print(f"   + {rtype:5} {name} — created")
+    cf("POST", f"/zones/{zone_id}/dns_records", token, payload)
+    print(f"   + {rtype:5} {name} — created")
 
 
 # ── main ────────────────────────────────────────────────────────────
