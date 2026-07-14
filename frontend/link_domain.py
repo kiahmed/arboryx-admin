@@ -97,9 +97,19 @@ def gcloud_token() -> str:
 
 
 # ── Firebase Hosting customDomains ──────────────────────────────────
+def _fb_headers(parent: str, token: str, json_body: bool = False) -> dict:
+    # gcloud USER tokens must name a quota project, or the Firebase Hosting API
+    # attributes the call to Google's shared gcloud project (where the API is
+    # disabled) and returns 403. `parent` is "projects/<id>/sites/<site>".
+    h = {"Authorization": f"Bearer {token}", "X-Goog-User-Project": parent.split("/")[1]}
+    if json_body:
+        h["Content-Type"] = "application/json"
+    return h
+
+
 def fb_get(parent: str, domain: str, token: str) -> dict | None:
     status, body = _req("GET", f"{FB_API}/{parent}/customDomains/{domain}",
-                        {"Authorization": f"Bearer {token}"})
+                        _fb_headers(parent, token))
     if status == 404:
         return None
     if status >= 400:
@@ -110,7 +120,7 @@ def fb_get(parent: str, domain: str, token: str) -> dict | None:
 def fb_create(parent: str, domain: str, token: str):
     status, body = _req(
         "POST", f"{FB_API}/{parent}/customDomains?customDomainId={domain}",
-        {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}, {})
+        _fb_headers(parent, token, json_body=True), {})
     if status == 409:
         print(f"   customDomain {domain} already registered — reusing")
         return
