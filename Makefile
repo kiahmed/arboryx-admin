@@ -4,7 +4,7 @@
 .PHONY: help \
         api-deploy api-update api-cold-start api-local \
         ui-deploy ui-local \
-        frontend-config frontend-gcs frontend-firebase \
+        frontend-config frontend-gcs frontend-firebase migrate \
         rotator-setup rotator-deploy reminder-setup reminder-deploy \
         user-create user-rotate user-list user-get user-delete \
         rotate-key list-secrets sync-firestore dev-setup \
@@ -81,6 +81,9 @@ frontend-gcs:      ## Deploy the public landing page to GCS [DRY=1]
 
 frontend-firebase: ## Deploy the public landing page to Firebase Hosting [DRY=1]
 	bash frontend/deploy.sh --firebase $(_DRY)
+
+migrate:           ## One-time: cut the arboryx.ai apex over from GCS to Firebase Hosting (idempotent) [DRY=1]
+	bash frontend/migrate_to_firebase.sh $(_DRY)
 
 # ==========================================================================
 #  Key rotator + rotation reminder (quarterly Cloud Functions)
@@ -159,12 +162,15 @@ build:            ## Validate everything (bash -n, py_compile, node --check) —
 	@echo "validating shell scripts..."; \
 	 for s in $$(git ls-files '*.sh'); do bash -n "$$s" && echo "  ok  $$s" || exit 1; done
 	@echo "compiling python..."; \
-	 python3 -m py_compile cloud_function/main.py $$(git ls-files 'dev-utils/*.py') && echo "  ok  python"
+	 python3 -m py_compile cloud_function/main.py $$(git ls-files 'dev-utils/*.py' 'frontend/*.py') && echo "  ok  python"
 	@echo "checking admin-UI inline JS..."; \
-	 f="$$(. ./arboryx_admin_ui.config 2>/dev/null; echo $${UI_FILE:-arborist_3.5.html})"; \
-	 d="$$(mktemp -d)"; tmp="$$d/uicheck.js"; \
-	 python3 -c "import re;src=open('$$f').read();m=re.search(r'<script>(.*)</script>',src,re.S);open('$$tmp','w').write(m.group(1))" \
-	   && node --check "$$tmp" && echo "  ok  $$f inline JS"; rm -rf "$$d"
+	 f=arborist_3.5.html; \
+	 [ -f ./arboryx_admin_ui.config ] && f="$$(. ./arboryx_admin_ui.config 2>/dev/null; echo $${UI_FILE:-arborist_3.5.html})" || true; \
+	 if [ -n "$$f" ] && [ -f "$$f" ]; then \
+	   d="$$(mktemp -d)"; tmp="$$d/uicheck.js"; \
+	   python3 -c "import re;src=open('$$f').read();m=re.search(r'<script>(.*)</script>',src,re.S);open('$$tmp','w').write(m.group(1))" \
+	     && node --check "$$tmp" && echo "  ok  $$f inline JS"; rm -rf "$$d"; \
+	 else echo "  skip UI JS check ($$f not present in this checkout)"; fi
 
 clean:            ## Remove build artifacts + caches (dist/, __pycache__, *.pyc)
 	rm -rf dist
