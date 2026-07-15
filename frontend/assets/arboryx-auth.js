@@ -361,7 +361,15 @@
       menu.hidden = !menu.hidden;
       acct.setAttribute('aria-expanded', String(!menu.hidden));
     });
-    document.addEventListener('click', function () { if (menu) menu.hidden = true; });
+    // Close the account menu on any outside click — attach ONCE (querying the
+    // current menu by id) instead of a new closure per render (was a leak).
+    if (!window.__aauthMenuCloser) {
+      window.__aauthMenuCloser = true;
+      document.addEventListener('click', function () {
+        var m = document.getElementById('aauthMenu');
+        if (m) m.hidden = true;
+      });
+    }
     var linkBtn = s.querySelector('#aauthLinkProfile');
     if (linkBtn) {
       linkBtn.addEventListener('click', function (ev) {

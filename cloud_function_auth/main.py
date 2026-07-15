@@ -48,6 +48,7 @@ IAM / signing note:
 """
 
 import json
+import logging
 import os
 import re
 from datetime import timedelta
@@ -70,12 +71,18 @@ PRODUCT_TIERS = {
     "robotics": 1,
 }
 
-# CORS allowlist: apex + any *.arboryx.ai subdomain + the Phase-1 preview channel.
-_PREVIEW_ORIGIN = os.environ.get(
-    "PREVIEW_ORIGIN", "https://arboryx-ai--phase1-auth-mu303eh6.web.app"
-)
-_EXACT_ORIGINS = {"https://arboryx.ai", _PREVIEW_ORIGIN}
-_SUBDOMAIN_RE = re.compile(r"^https://([a-z0-9-]+\.)+arboryx\.ai$", re.IGNORECASE)
+# CORS allowlist: explicit apex/product origins + Firebase preview channels for
+# the arboryx-ai site. NOT a blanket *.arboryx.ai wildcard (which would trust any
+# subdomain, including a future dangling / takeover-able one).
+_EXACT_ORIGINS = {
+    "https://arboryx.ai",
+    "https://www.arboryx.ai",
+    "https://robotics.arboryx.ai",
+    "https://arboryx-ai.web.app",
+}
+# Firebase Hosting preview channels are Firebase-namespaced under the arboryx-ai
+# site, not attacker-registrable.
+_PREVIEW_RE = re.compile(r"^https://arboryx-ai--[a-z0-9-]+\.web\.app$", re.IGNORECASE)
 
 # ── Firebase Admin singleton (reused across warm invocations) ───────────────
 _app = None
@@ -98,7 +105,7 @@ def _allowed_origin(origin):
         return None
     if origin in _EXACT_ORIGINS:
         return origin
-    if _SUBDOMAIN_RE.match(origin):
+    if _PREVIEW_RE.match(origin):
         return origin
     return None
 
@@ -165,13 +172,15 @@ def _login(request, origin, db):
     try:
         decoded = fb_auth.verify_id_token(id_token, check_revoked=True)
     except Exception as e:  # noqa: BLE001
-        return _json({"error": "invalid_id_token", "detail": str(e)}, 401, origin)
+        logging.warning("verify_id_token failed: %s", e)
+        return _json({"error": "invalid_id_token"}, 401, origin)
 
     try:
         cookie = fb_auth.create_session_cookie(id_token, expires_in=SESSION_TTL)
     except Exception as e:  # noqa: BLE001
-        # Most likely an IAM/token issue on the runtime SA.
-        return _json({"error": "session_cookie_failed", "detail": str(e)}, 500, origin)
+        # Most likely an IAM/token issue on the runtime SA — log, don't leak.
+        logging.error("create_session_cookie failed: %s", e)
+        return _json({"error": "session_cookie_failed"}, 500, origin)
 
     uid = decoded.get("uid")
     now = firestore.SERVER_TIMESTAMP
