@@ -314,8 +314,11 @@
   function renderSignedIn(user) {
     var s = findSlot();
     if (!s) return;
-    var avatar = user.photoURL
-      ? '<span class="aauth-avatar"><img src="' + user.photoURL + '" alt=""></span>'
+    // Only render a photoURL that is a real https URL, and escape it — never
+    // interpolate raw user-controlled data into an innerHTML attribute (XSS).
+    var safePhoto = (user.photoURL && /^https:\/\//i.test(user.photoURL)) ? escapeHtml(user.photoURL) : '';
+    var avatar = safePhoto
+      ? '<span class="aauth-avatar"><img src="' + safePhoto + '" alt=""></span>'
       : '<span class="aauth-avatar">' + initial(user) + '</span>';
     var label = user.displayName || user.email || user.phoneNumber || 'Account';
     s.innerHTML =
