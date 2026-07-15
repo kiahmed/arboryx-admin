@@ -33,6 +33,16 @@
   var PRODUCT_ID = 'arboryx';
   var PRODUCT_TIER = 1;
 
+  // ── Phase 2: cross-subdomain SSO via a shared .arboryx.ai session cookie ──
+  // The apex/subdomain each expose the arboryx-auth function first-party under
+  // /__session/** (Firebase Hosting rewrite). We POST the Firebase ID token to
+  // /__session/login to mint an HttpOnly Domain=.arboryx.ai cookie, and read
+  // /__session/me on boot so a session established on robotics.arboryx.ai (or
+  // vice-versa) is auto-detected here. All calls are credentialed.
+  var SESSION_BASE = '/__session';
+  var sessionMe = null;        // last successful /me payload, or null
+  var renderedFromSession = false;  // chip rendered from cookie (no local Firebase user yet)
+
   // ── Deferred soft-prompt tuning ────────────────────────────────────
   var PROMPT_DELAY_MS = 60 * 1000;   // auto-open N ms after first paint…
   var PROMPT_INTERACTIONS = 2;       // …or on the Nth interaction, if sooner
@@ -110,6 +120,9 @@
       '.aauth-menu .aauth-email{font-family:var(--font-mono,monospace);font-size:11px;color:var(--muted,#4a5e80);padding:4px 6px 10px;border-bottom:1px solid var(--border2,#243050);margin-bottom:8px;word-break:break-all;}' +
       '.aauth-signout{width:100%;padding:8px 10px;background:transparent;border:1px solid var(--border2,#243050);border-radius:8px;font-family:var(--font-mono,monospace);font-size:11px;color:var(--text,#c8d6f0);cursor:pointer;text-transform:uppercase;letter-spacing:.05em;}' +
       '.aauth-signout:hover{border-color:var(--accent,#f0b840);color:var(--accent,#f0b840);}' +
+      '.aauth-link-cta{width:100%;margin-bottom:8px;padding:8px 10px;background:var(--accent,#f0b840);color:#1a1a1a;border:none;border-radius:8px;font-family:var(--font-mono,monospace);font-size:11px;font-weight:700;cursor:pointer;letter-spacing:.03em;}' +
+      '.aauth-link-cta:hover{filter:brightness(1.06);}' +
+      '.aauth-link-cta:disabled{opacity:.6;cursor:progress;}' +
       '.aauth-slot{position:relative;display:inline-flex;align-items:center;}';
     var style = document.createElement('style');
     style.id = 'aauth-styles';
@@ -315,9 +328,10 @@
     var b = s.querySelector('#aauthSignIn');
     if (b) b.addEventListener('click', openModal);
   }
-  function renderSignedIn(user) {
+  function renderSignedIn(user, opts) {
     var s = findSlot();
     if (!s) return;
+    opts = opts || {};
     // Only render a photoURL that is a real https URL, and escape it — never
     // interpolate raw user-controlled data into an innerHTML attribute (XSS).
     var safePhoto = (user.photoURL && /^https:\/\//i.test(user.photoURL)) ? escapeHtml(user.photoURL) : '';
@@ -325,12 +339,19 @@
       ? '<span class="aauth-avatar"><img src="' + safePhoto + '" alt=""></span>'
       : '<span class="aauth-avatar">' + initial(user) + '</span>';
     var label = user.displayName || user.email || user.phoneNumber || 'Account';
+    // Phase 2: if the visitor arrived with a shared .arboryx.ai session but is
+    // not yet a member of THIS product, offer a one-click "continue with your
+    // existing profile" grant (→ /__session/link).
+    var linkCta = opts.showLink
+      ? '<button type="button" class="aauth-link-cta" id="aauthLinkProfile">Continue with your existing profile</button>'
+      : '';
     s.innerHTML =
       '<button type="button" class="aauth-account" id="aauthAccount" aria-haspopup="true" aria-expanded="false">' +
         avatar + '<span class="aauth-account-label">' + escapeHtml(label) + '</span>' +
       '</button>' +
       '<div class="aauth-menu" id="aauthMenu" hidden>' +
         '<div class="aauth-email">' + escapeHtml(user.email || user.phoneNumber || '') + '</div>' +
+        linkCta +
         '<button type="button" class="aauth-signout" id="aauthSignOut">Sign out</button>' +
       '</div>';
     var acct = s.querySelector('#aauthAccount');
@@ -340,9 +361,28 @@
       menu.hidden = !menu.hidden;
       acct.setAttribute('aria-expanded', String(!menu.hidden));
     });
-    document.addEventListener('click', function () { if (menu) menu.hidden = true; });
+    // Close the account menu on any outside click — attach ONCE (querying the
+    // current menu by id) instead of a new closure per render (was a leak).
+    if (!window.__aauthMenuCloser) {
+      window.__aauthMenuCloser = true;
+      document.addEventListener('click', function () {
+        var m = document.getElementById('aauthMenu');
+        if (m) m.hidden = true;
+      });
+    }
+    var linkBtn = s.querySelector('#aauthLinkProfile');
+    if (linkBtn) {
+      linkBtn.addEventListener('click', function (ev) {
+        ev.stopPropagation();
+        linkBtn.disabled = true;
+        linkProduct(PRODUCT_ID).then(function (ok) {
+          if (ok) { linkBtn.remove(); }
+          else { linkBtn.disabled = false; }
+        });
+      });
+    }
     s.querySelector('#aauthSignOut').addEventListener('click', function () {
-      firebase.auth().signOut();
+      globalSignOut();
     });
   }
   function escapeHtml(s) {
@@ -424,6 +464,92 @@
     if (interactions >= PROMPT_INTERACTIONS) maybePrompt();
   }
 
+  // ── Phase 2: shared-session (.arboryx.ai cookie) helpers ───────────
+  function sessionFetch(path, opts) {
+    opts = opts || {};
+    opts.credentials = 'include';   // send/receive the .arboryx.ai cookie
+    return fetch(SESSION_BASE + path, opts);
+  }
+  function isMember(products) {
+    return !!(products && products[PRODUCT_ID]);
+  }
+  // Mint the shared cookie from a signed-in Firebase user's ID token.
+  function postLogin(user) {
+    return user.getIdToken().then(function (idToken) {
+      return sessionFetch('/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+        body: JSON.stringify({ idToken: idToken }),
+      });
+    }).catch(function (e) {
+      console.warn('[ArboryxAuth] session login failed:', e);
+    });
+  }
+  // Read the shared session (200 → payload; 401/err → null).
+  function fetchMe() {
+    return sessionFetch('/me', {
+      headers: { 'X-Requested-With': 'XMLHttpRequest' },
+    }).then(function (r) {
+      return r.ok ? r.json() : null;
+    }).catch(function () { return null; });
+  }
+  // Grant THIS product to the existing shared profile.
+  function linkProduct(productId) {
+    return sessionFetch('/link', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+      body: JSON.stringify({ product: productId }),
+    }).then(function (r) {
+      if (!r.ok) return false;
+      return r.json().then(function (data) {
+        if (sessionMe) sessionMe.products = data.products || sessionMe.products;
+        return true;
+      });
+    }).catch(function () { return false; });
+  }
+  // Global sign-out: clear the shared cookie + revoke, THEN drop local Firebase.
+  function globalSignOut() {
+    sessionMe = null;
+    renderedFromSession = false;
+    sessionFetch('/logout', {
+      method: 'POST',
+      headers: { 'X-Requested-With': 'XMLHttpRequest' },
+    }).catch(function () {}).then(function () {
+      if (window.firebase && firebase.auth && firebase.auth().currentUser) {
+        firebase.auth().signOut().catch(function () {});
+      } else {
+        renderSignedOut();
+      }
+    });
+  }
+  // Boot-time cross-product detection: render the account chip from the shared
+  // cookie before Firebase resolves, so a session from another subdomain shows
+  // immediately. onAuthStateChanged remains authoritative and reconciles.
+  function bootSessionCheck() {
+    return fetchMe().then(function (me) {
+      sessionMe = me;
+      if (!me) return;
+      if (currentUser) return;          // Firebase already rendered — defer to it
+      renderedFromSession = true;
+      renderSignedIn(me, { showLink: !isMember(me.products) });
+    });
+  }
+  // Re-check on tab focus so a sign-out on another subdomain propagates here.
+  function recheckSession() {
+    if (!currentUser && !renderedFromSession) return;   // nothing to lose
+    fetchMe().then(function (me) {
+      if (me) { sessionMe = me; return; }
+      // Cookie gone/revoked elsewhere → drop to signed-out (and local Firebase).
+      sessionMe = null;
+      renderedFromSession = false;
+      if (window.firebase && firebase.auth && firebase.auth().currentUser) {
+        firebase.auth().signOut().catch(function () {});
+      } else {
+        renderSignedOut();
+      }
+    });
+  }
+
   // ── Boot ───────────────────────────────────────────────────────────
   function init(config) {
     if (booted) return;
@@ -436,6 +562,16 @@
     injectStyles();
     renderSignedOut();               // show the trigger immediately
     armPromptTimer();                // clock starts at first paint
+
+    // Phase 2: detect a shared .arboryx.ai session (e.g. signed in on
+    // robotics.arboryx.ai) before Firebase resolves, and render the chip.
+    bootSessionCheck();
+
+    // Propagate cross-subdomain sign-out into an open tab.
+    document.addEventListener('visibilitychange', function () {
+      if (document.visibilityState === 'visible') recheckSession();
+    });
+    window.addEventListener('focus', recheckSession);
 
     // Light, non-invasive interaction signal: clicks on grove trees.
     document.addEventListener('click', function (ev) {
@@ -458,11 +594,25 @@
         authKnown = true;
         if (user) {
           closeModal();
+          renderedFromSession = false;
           renderSignedIn(user);
           upsertProfileAndMembership(user).catch(function (e) {
             console.warn('[ArboryxAuth] profile/membership upsert failed:', e);
           });
+          // Phase 2: mint / refresh the shared .arboryx.ai cookie, then
+          // re-sync membership state from /me (drives the link CTA).
+          postLogin(user).then(function () {
+            return fetchMe();
+          }).then(function (me) {
+            if (me) sessionMe = me;
+          });
+        } else if (sessionMe) {
+          // No local Firebase user, but a shared cookie exists (signed in on
+          // another subdomain). Keep the session chip — don't drop to signed-out.
+          renderedFromSession = true;
+          renderSignedIn(sessionMe, { showLink: !isMember(sessionMe.products) });
         } else {
+          renderedFromSession = false;
           renderSignedOut();
         }
       });
@@ -474,7 +624,7 @@
   window.ArboryxAuth = {
     init: init,
     openSignIn: openModal,
-    signOut: function () { if (window.firebase && firebase.auth) firebase.auth().signOut(); },
+    signOut: globalSignOut,
     noteInteraction: noteInteraction,
   };
 

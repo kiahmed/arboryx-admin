@@ -12,6 +12,10 @@
       "deploy.sh"
     ],
     "rewrites": [
+      {
+        "source": "/__session/**",
+        "run": { "serviceId": "arboryx-auth", "region": "us-central1" }
+      },
       { "source": "**", "destination": "/index.html" }
     ],
     "headers": [
