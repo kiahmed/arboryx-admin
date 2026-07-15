@@ -297,6 +297,10 @@
   function findSlot() {
     if (slot && document.body.contains(slot)) return slot;
     slot = document.getElementById('arboryxAuthSlot');
+    // Ensure the slot is a positioning context so the account dropdown anchors
+    // to it (the page markup uses class "auth-slot"; the CSS keys off
+    // "aauth-slot" — add it here so we don't depend on the HTML class).
+    if (slot) slot.classList.add('aauth-slot');
     return slot;
   }
   function initial(user) {
