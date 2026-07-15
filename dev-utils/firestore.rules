@@ -1,0 +1,88 @@
+rules_version = '2';
+
+// ============================================================================
+// SHARED, WHOLE-DATABASE Firestore ruleset for the (default) database of the
+// `marketresearch-agents` GCP project.
+//
+// ⚠️  COORDINATED DEPLOY — READ BEFORE SHIPPING  ⚠️
+// This one file governs the ENTIRE shared database, which is used by MULTIPLE
+// frontends/repos:
+//   • catalyst-knowledge-graph (robotics)  → CKG-* collections + users/*
+//   • arboryx-admin (this repo)            → findings/* + users/* + products
+// The canonical source of truth currently lives in the robotics repo at
+//   catalyst-knowledge-graph/tools/frontend-deploy/firestore.rules
+// Deploying rules from EITHER repo REPLACES the whole-DB ruleset. This file is
+// that robotics ruleset EXTENDED with the Arboryx user/products/config rules
+// below. It was NOT auto-deployed by the Phase-1 build — merge these additions
+// into the canonical file and deploy once, as a coordinated whole-DB operation.
+//
+// Design note: `findings` is intentionally absent → denied to browsers. It is
+// written and read only by backend service accounts (Admin SDK bypasses rules)
+// and the Cloud Function API, never directly by a browser client.
+// ============================================================================
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Default: deny all client (browser) access.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // ── Robotics catalyst data (UNCHANGED) ──────────────────────────────
+    // The robotics frontend requires sign-in; any authed user may read
+    // CKG-<sector>. Writes stay server-side.
+    match /{collection}/{doc=**} {
+      allow read: if request.auth != null
+                  && collection.matches('CKG-.*');
+    }
+
+    // ── User profiles (EXTENDED) ────────────────────────────────────────
+    // One doc per user, written by the frontend on each sign-in. A user may
+    // read/write only their own doc, and the stored `uid` must match the
+    // authenticated uid. Clients may NEVER create or change an `entitlement`
+    // field (backend-only). No client deletes.
+    match /users/{uid} {
+      allow read: if request.auth != null && request.auth.uid == uid;
+
+      allow create: if request.auth != null
+                    && request.auth.uid == uid
+                    && request.resource.data.uid == uid
+                    && !('entitlement' in request.resource.data);
+
+      allow update: if request.auth != null
+                    && request.auth.uid == uid
+                    && request.resource.data.uid == uid
+                    && !request.resource.data.diff(resource.data)
+                          .affectedKeys().hasAny(['entitlement']);
+
+      allow delete: if false;
+
+      // ── Product membership subdocs (NEW) ──────────────────────────────
+      // e.g. users/{uid}/products/arboryx = { productId, tier, joinedAt,
+      // joinedVia, lastSeenAt }. Owner may read/write EXCEPT the backend-only
+      // `entitlement` field, which the client can neither create nor modify.
+      match /products/{productId} {
+        allow read: if request.auth != null && request.auth.uid == uid;
+
+        allow create: if request.auth != null
+                      && request.auth.uid == uid
+                      && !('entitlement' in request.resource.data);
+
+        allow update: if request.auth != null
+                      && request.auth.uid == uid
+                      && !request.resource.data.diff(resource.data)
+                            .affectedKeys().hasAny(['entitlement']);
+
+        allow delete: if false;
+      }
+    }
+
+    // ── Product catalog (NEW) ───────────────────────────────────────────
+    // World-readable product metadata (displayName, tier, gateEnabled). Seeded
+    // server-side by dev-utils/seed_products_config.py. Client writes denied.
+    match /config/products/items/{productId} {
+      allow read: if true;
+      allow write: if false;
+    }
+  }
+}

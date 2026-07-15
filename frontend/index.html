@@ -43,9 +43,9 @@
 
       <nav class="header-nav" aria-label="Primary">
         <a class="nav-link active" href="#new-growths">New Growths</a>
-        <button type="button" class="auth-stub" disabled aria-disabled="true">
-          Sign in (coming soon)
-        </button>
+        <!-- Auth slot — populated by assets/arboryx-auth.js:
+             a "Sign in" trigger when logged out, an account menu when logged in. -->
+        <div class="auth-slot" id="arboryxAuthSlot"></div>
       </nav>
     </header>
 
@@ -213,5 +213,11 @@
   <script src="scripts/config.js" defer></script>
   <script src="scripts/landing.js" defer></script>
   <script src="scripts/grove.js" defer></script>
+
+  <!-- Public-user auth (Phase 1): public Firebase web config, then the auth
+       module. Deferred so they run after parse; the module lazy-loads the
+       Firebase SDK from gstatic on boot. -->
+  <script src="firebase-config.js" defer></script>
+  <script src="assets/arboryx-auth.js" defer></script>
 </body>
 </html>
