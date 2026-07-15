@@ -61,8 +61,10 @@ _is_merged() {
 }
 
 _clean_one() {
-  local dir="$1" branch ahead
-  # Don't remove the worktree the caller is standing in.
+  local dir="$1" branch ahead do_remove_force=0
+  # Don't remove the worktree the caller is standing in. Normally moot — the
+  # `worktree-clean` make target cd's to the main tree first, so you invoke this
+  # from main — but this still guards a direct-from-inside run of the script.
   case "$INVOKE_PWD" in "$dir"|"$dir"/*)
     echo "[worktree-clean] skip $dir (you're inside it)"; return 0;; esac
 
@@ -73,11 +75,13 @@ _clean_one() {
   echo "[worktree-clean] dir=$dir branch=$branch"
 
   if [ "$FORCE" = "1" ]; then
-    echo "  FORCE set — skipping merged check"
+    echo "  FORCE set — skipping merged check"; do_remove_force=1
   elif ! git rev-parse --verify "$branch" >/dev/null 2>&1; then
     echo "  local branch $branch not found — cleaning dir/remote only"
   elif _is_merged "$branch"; then
-    echo "  ✓ $branch is merged into origin/main"
+    # Merged = every commit is in origin/main, so untracked leftovers in the
+    # worktree (caches, gitignored config copies) are safe to force-remove.
+    echo "  ✓ $branch is merged into origin/main"; do_remove_force=1
   else
     ahead="$(git rev-list --count origin/main.."$branch" 2>/dev/null || echo '?')"
     echo "  ✗ SKIP: $branch has $ahead commit(s) not in origin/main. Merge its PR, or pass FORCE=1."
@@ -86,7 +90,7 @@ _clean_one() {
 
   # 1. worktree dir + registration
   if [ -d "$dir" ]; then
-    if [ "$FORCE" = "1" ]; then
+    if [ "$do_remove_force" = "1" ]; then
       git worktree remove --force "$dir" && echo "  removed worktree $dir"
     else
       git worktree remove "$dir" && echo "  removed worktree $dir" \
