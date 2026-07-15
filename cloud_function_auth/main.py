@@ -48,10 +48,9 @@ IAM / signing note:
 """
 
 import json
-import logging
 import os
 import re
-from datetime import timedelta
+from datetime import date, datetime, timedelta
 
 import firebase_admin
 from firebase_admin import auth as fb_auth
@@ -125,8 +124,20 @@ def _base_headers(origin):
     return h
 
 
+def _json_default(o):
+    # Firestore returns DatetimeWithNanoseconds (a datetime subclass) for
+    # timestamp fields; make them JSON-serializable.
+    if isinstance(o, (datetime, date)):
+        return o.isoformat()
+    return str(o)
+
+
 def _json(body, status, origin, extra_headers=None):
-    resp = Response(json.dumps(body), status=status, mimetype="application/json")
+    resp = Response(
+        json.dumps(body, default=_json_default),
+        status=status,
+        mimetype="application/json",
+    )
     for k, v in _base_headers(origin).items():
         resp.headers[k] = v
     if extra_headers:
