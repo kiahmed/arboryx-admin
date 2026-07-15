@@ -29,10 +29,13 @@ Because robotics is served on `robotics.arboryx.ai`, the browser hits
 `https://robotics.arboryx.ai/__session/...` first-party, and the cookie
 (`Domain=.arboryx.ai`) is shared with the apex.
 
-> The `arboryx-auth` CORS allowlist already accepts any `https://*.arboryx.ai`
-> origin, so `robotics.arboryx.ai` works with no function change. If robotics
-> ever gets its own preview channel that needs credentialed calls, add that
-> exact origin to `_EXACT_ORIGINS` / `PREVIEW_ORIGIN` in `cloud_function_auth/main.py`.
+> The `arboryx-auth` CORS allowlist is an **explicit** origin allowlist (no
+> `*.arboryx.ai` wildcard, by design — a wildcard would trust a future
+> dangling/takeover-able subdomain). `https://robotics.arboryx.ai` is already
+> in `_EXACT_ORIGINS`, so robotics works with no function change. Any NEW
+> origin that needs credentialed calls (another product subdomain, or a
+> robotics preview channel not under the `arboryx-ai--…​.web.app` namespace)
+> must be added to `_EXACT_ORIGINS` / `_PREVIEW_RE` in `cloud_function_auth/main.py`.
 
 ## 2. Client hook (robotics `frontend/assets/auth.js`)
 

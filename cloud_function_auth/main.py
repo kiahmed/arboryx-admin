@@ -48,6 +48,7 @@ IAM / signing note:
 """
 
 import json
+import logging
 import os
 import re
 from datetime import date, datetime, timedelta
