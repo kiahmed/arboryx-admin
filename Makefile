@@ -182,7 +182,8 @@ clean:            ## Remove build artifacts + caches (dist/, __pycache__, *.pyc)
 #  Worktree cleanup
 # ==========================================================================
 worktree-clean:   ## Return primary tree to main + delete its branch; also clean MERGED worktrees [name] [FORCE=1]
-	@bash dev-utils/worktree-clean.sh "$(_POSARG)" "FORCE=$(FORCE)"
+	@cd "$$(git worktree list --porcelain | awk '/^worktree /{print $$2; exit}')" && \
+	  bash dev-utils/worktree-clean.sh "$(_POSARG)" "FORCE=$(FORCE)"
 
 # ==========================================================================
 #  Git workflow — hands stay on `ship` and `worktree-clean`; the branch
