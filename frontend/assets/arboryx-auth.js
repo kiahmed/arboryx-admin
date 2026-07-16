@@ -42,6 +42,8 @@
   var SESSION_BASE = '/__session';
   var sessionMe = null;        // last successful /me payload, or null
   var renderedFromSession = false;  // chip rendered from cookie (no local Firebase user yet)
+  var signingOut = false;      // set by globalSignOut() so a stale in-flight
+                               // /me cannot repopulate sessionMe after sign-out
 
   // ── Deferred soft-prompt tuning ────────────────────────────────────
   var PROMPT_DELAY_MS = 60 * 1000;   // auto-open N ms after first paint…
@@ -193,11 +195,37 @@
   var slot = null;
   var mode = 'signin';        // 'signin' | 'signup'
   var currentUser = null;
-  var authKnown = false;
+  var authKnown = false;       // Firebase onAuthStateChanged has fired at least once
+  var sessionChecked = false;  // boot /__session/me probe has settled
+  var authReady = false;       // both settled -> final signed-in/out decision known
+  var readyCbs = [];           // onAuthReady() callbacks pending the first decision
   var booted = false;
   var promptShown = false;
   var interactions = 0;
   var promptTimer = null;
+
+  // Authoritative signed-in check: a local Firebase user OR a shared
+  // .arboryx.ai cookie session (signed in on another subdomain).
+  function isSignedIn() { return !!currentUser || !!sessionMe; }
+
+  // Fire onAuthReady callbacks exactly once, after BOTH the Firebase auth
+  // state and the shared-session probe have settled -- so gating code never
+  // redirects a signed-in visitor during the async boot window.
+  function markReady() {
+    if (authReady) return;
+    if (!(authKnown && sessionChecked)) return;
+    authReady = true;
+    var signed = isSignedIn();
+    var cbs = readyCbs; readyCbs = [];
+    for (var i = 0; i < cbs.length; i++) {
+      try { cbs[i](signed); } catch (_) {}
+    }
+  }
+  function onAuthReady(cb) {
+    if (typeof cb !== 'function') return;
+    if (authReady) { try { cb(isSignedIn()); } catch (_) {} return; }
+    readyCbs.push(cb);
+  }
 
   function showMsg(text, kind) {
     if (!els.msg) return;
@@ -509,6 +537,7 @@
   }
   // Global sign-out: clear the shared cookie + revoke, THEN drop local Firebase.
   function globalSignOut() {
+    signingOut = true;          // gate any in-flight /me from re-signing us in
     sessionMe = null;
     renderedFromSession = false;
     sessionFetch('/logout', {
@@ -528,17 +557,20 @@
   function bootSessionCheck() {
     return fetchMe().then(function (me) {
       sessionMe = me;
-      if (!me) return;
-      if (currentUser) return;          // Firebase already rendered — defer to it
-      renderedFromSession = true;
-      renderSignedIn(me, { showLink: !isMember(me.products) });
+      if (me && !currentUser) {          // Firebase not yet resolved -> show cookie chip
+        renderedFromSession = true;
+        renderSignedIn(me, { showLink: !isMember(me.products) });
+      }
+    }).then(function () {
+      sessionChecked = true;
+      markReady();
     });
   }
   // Re-check on tab focus so a sign-out on another subdomain propagates here.
   function recheckSession() {
     if (!currentUser && !renderedFromSession) return;   // nothing to lose
     fetchMe().then(function (me) {
-      if (me) { sessionMe = me; return; }
+      if (me) { if (!signingOut) sessionMe = me; return; }
       // Cookie gone/revoked elsewhere → drop to signed-out (and local Firebase).
       sessionMe = null;
       renderedFromSession = false;
@@ -557,6 +589,7 @@
     var cfg = config || window.FIREBASE_CONFIG;
     if (!cfg || !cfg.apiKey) {
       console.warn('[ArboryxAuth] no FIREBASE_CONFIG — auth disabled.');
+      authKnown = true; sessionChecked = true; markReady();
       return;
     }
     injectStyles();
@@ -566,6 +599,13 @@
     // Phase 2: detect a shared .arboryx.ai session (e.g. signed in on
     // robotics.arboryx.ai) before Firebase resolves, and render the chip.
     bootSessionCheck();
+
+    // Gated pages (e.g. new_growth.html) redirect signed-out visitors here
+    // with ?signin=1 — open the modal once auth state is known and confirms
+    // they are signed out.
+    onAuthReady(function (signed) {
+      if (!signed && /[?&]signin=1(?:&|$)/.test(location.search)) openModal();
+    });
 
     // Propagate cross-subdomain sign-out into an open tab.
     document.addEventListener('visibilitychange', function () {
@@ -589,10 +629,18 @@
           appId: cfg.appId,
         });
       }
+      // Persist the session in IndexedDB so it survives same-origin
+      // navigation and new tabs (this is the browser default, set
+      // explicitly as a guard against any host that changed it).
+      try {
+        firebase.auth().setPersistence(firebase.auth.Auth.Persistence.LOCAL);
+      } catch (_) {}
       firebase.auth().onAuthStateChanged(function (user) {
         currentUser = user;
         authKnown = true;
+        markReady();
         if (user) {
+          signingOut = false;     // a real sign-in cancels a prior sign-out intent
           closeModal();
           renderedFromSession = false;
           renderSignedIn(user);
@@ -604,7 +652,7 @@
           postLogin(user).then(function () {
             return fetchMe();
           }).then(function (me) {
-            if (me) sessionMe = me;
+            if (me && !signingOut) sessionMe = me;
           });
         } else if (sessionMe) {
           // No local Firebase user, but a shared cookie exists (signed in on
@@ -618,6 +666,7 @@
       });
     }).catch(function (e) {
       console.error('[ArboryxAuth] SDK init failed:', e);
+      authKnown = true; markReady();
     });
   }
 
@@ -626,6 +675,8 @@
     openSignIn: openModal,
     signOut: globalSignOut,
     noteInteraction: noteInteraction,
+    isSignedIn: isSignedIn,
+    onAuthReady: onAuthReady,
   };
 
   // Auto-init after config scripts have run.

@@ -910,9 +910,8 @@
 
       <nav class="header-nav" aria-label="Primary">
         <a class="nav-link" href="/">Home</a>
-        <button type="button" class="auth-stub" disabled aria-disabled="true">
-          Sign in (coming soon)
-        </button>
+        <!-- Auth slot — populated by assets/arboryx-auth.js: a "Sign in" trigger when logged out, an account menu when logged in. -->
+        <div class="auth-slot" id="arboryxAuthSlot"></div>
       </nav>
     </header>
 
@@ -2012,6 +2011,24 @@
 
   <!-- Public chrome handlers (share/follow buttons, dynamic year) -->
   <script src="scripts/landing.js" defer></script>
+
+  <!-- Public-user auth (Phase 1/2): public Firebase web config, then the auth
+       module (same wiring as index.html). Deferred so they run after parse. -->
+  <script src="firebase-config.js" defer></script>
+  <script src="assets/arboryx-auth.js" defer></script>
+  <!-- Member gate: new_growth.html is tier-1 member-only. A signed-out
+       visitor is bounced to the grove with ?signin=1 (opens the sign-in modal).
+       Uses ArboryxAuth.onAuthReady so a signed-in session (local Firebase OR
+       the shared .arboryx.ai cookie) is never falsely redirected mid-boot. -->
+  <script>
+    (function () {
+      function gate(signedIn) { if (!signedIn) window.location.replace('/?signin=1'); }
+      (function wait() {
+        if (window.ArboryxAuth && window.ArboryxAuth.onAuthReady) window.ArboryxAuth.onAuthReady(gate);
+        else setTimeout(wait, 40);
+      })();
+    })();
+  </script>
 </body>
 
 </html>

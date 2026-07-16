@@ -348,6 +348,13 @@
   // Second click on SAME leaf (or Enter while focused): navigate
   // ----------------------------------------------------------------------
   function navigateToEntry(leafEl) {
+    // Member gate (bug #4): the new_growth detail page is tier-1 member-only.
+    // A signed-out visitor gets the sign-in modal instead of navigation.
+    if (window.ArboryxAuth && typeof window.ArboryxAuth.isSignedIn === 'function'
+        && !window.ArboryxAuth.isSignedIn()) {
+      if (typeof window.ArboryxAuth.openSignIn === 'function') window.ArboryxAuth.openSignIn();
+      return;
+    }
     const sector  = leafEl.getAttribute('data-sector') || '';
     const entryId = leafEl.getAttribute('data-entry-id') || '';
     const ts      = leafEl.getAttribute('data-timestamp') || '';

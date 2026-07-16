@@ -1,0 +1,10 @@
+{
+  "name": "arboryx-e2e",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Playwright + firebase-admin harness for arboryx auth e2e tests",
+  "dependencies": {
+    "@playwright/test": "^1.61.1",
+    "firebase-admin": "^14.1.0"
+  }
+}

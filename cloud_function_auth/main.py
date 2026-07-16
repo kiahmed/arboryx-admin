@@ -60,7 +60,12 @@ from flask import Response
 
 # ── Config ──────────────────────────────────────────────────────────────────
 PROJECT_ID = os.environ.get("PROJECT_ID", "marketresearch-agents")
-COOKIE_NAME = os.environ.get("SESSION_COOKIE_NAME", "__Secure-arboryx_session")
+# Firebase Hosting forwards ONLY a cookie named exactly `__session` to a
+# rewritten Cloud Run backend; every other cookie is stripped from the request
+# before it reaches this function. The cookie MUST therefore be named
+# `__session` (no `__Secure-`/`__Host-` prefix — those names would be stripped
+# by Hosting). Secure/HttpOnly/SameSite are still set explicitly below.
+COOKIE_NAME = os.environ.get("SESSION_COOKIE_NAME", "__session")
 COOKIE_DOMAIN = os.environ.get("COOKIE_DOMAIN", ".arboryx.ai")
 SESSION_TTL = timedelta(days=5)
 SESSION_MAX_AGE = int(SESSION_TTL.total_seconds())  # 432000
@@ -148,10 +153,13 @@ def _json(body, status, origin, extra_headers=None):
 
 
 def _set_cookie_header(value, max_age):
-    """Exact Set-Cookie string. __Secure- prefix REQUIRES Secure (and permits
-    Domain — unlike __Host-, which forbids it, so __Host- can't be shared
-    across subdomains). SameSite=Lax is fine: apex↔subdomain are the same
-    registrable site, so these are same-site requests."""
+    """Exact Set-Cookie string. The cookie is named `__session` because
+    Firebase Hosting forwards ONLY that cookie to a rewritten Cloud Run backend
+    (all others are stripped from the incoming request). A `__Secure-`/`__Host-`
+    prefixed name would be stripped by Hosting and never reach `/me`. We still
+    set Secure + HttpOnly explicitly, and Domain=.arboryx.ai so the cookie is
+    shared across subdomains. SameSite=Lax is fine: apex<->subdomain are the
+    same registrable site, so these are same-site requests."""
     return (
         "{name}={val}; Domain={dom}; Path=/; Max-Age={age}; "
         "HttpOnly; Secure; SameSite=Lax"
